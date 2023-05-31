@@ -63,7 +63,7 @@ tcga_pd_generator <- function(sample_file) {
   write.csv(sample_pd, paste0(out_dir, "/IDAT/", study_name, "_pd.csv"), row.names = FALSE)
 }
 
-geo_pd_generator <- function(sample_matrix, keywords) {
+geo_pd_generator <- function(sample_matrix, keywords){
   study_name = paste(unlist(strsplit(sample_matrix, split = "_"))[2:3], collapse ="_")
   out_dir = dirname(sample_matrix)
   
@@ -81,4 +81,5 @@ geo_pd_generator <- function(sample_matrix, keywords) {
     distinct()
   return(sample_pd)
 }
+
 
