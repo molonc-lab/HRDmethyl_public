@@ -32,3 +32,5 @@ README.txt
 *.tiff
 *.html
 .Rproj.user
+#mis
+*.gz
