@@ -34,3 +34,4 @@ README.txt
 .Rproj.user
 #mis
 *.gz
+.Rhistory
