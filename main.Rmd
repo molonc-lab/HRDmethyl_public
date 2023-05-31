@@ -1,0 +1,98 @@
+---
+title: "main"
+author: "lijunx"
+date: "May 30, 2023"
+output: html_document
+---
+
+```{r getPackageFunction, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("purrr")
+library("data.table")
+library("tidyverse")
+source("scripts/supporting_function.R")
+
+```
+
+```{bash setup directory}
+mkdir -p data/supporting
+mkdir -p data/processed
+mkdir -p data/output_error
+mkdir -p data/processed/methylation
+```
+
+```{r setup working directory}
+dir <- getwd()
+Sys.setenv(dir = dir)
+```
+
+```{r testing supporting function}
+
+```
+
+
+```{r preprocess methylation sample info}
+# generate essential file for methylation process - TCGA
+pd_file_list <- Sys.glob("data/raw/*/*[!maf]_sample.tsv")
+invisible(lapply(pd_file_list, tcga_pd_generator))
+
+#generate essential file for methylation process - ICGC
+icgc_pd <- geo_pd_generator("data/raw/20220505_ICGC_OV_meth/GSE65820_series_matrix.txt", "!Sample_source_name_ch1")
+icgc_pd_id <- cbind(Sample_Name = unlist(fread("data/raw/20220505_ICGC_OV_meth/GSE65820_series_matrix.txt", header = F, sep = "\t", skip = "ID_REF", nrows = 1)[,-1]),
+                    Sample.ID= unlist(fread("data/raw/20220505_ICGC_OV_meth/GSE65820_series_matrix.txt", header = F, sep = "\t", skip = "Sample_title", nrows = 1 )[,-1])) %>%
+  as.data.frame()
+##manual currate pd before save
+icgc_pd <- icgc_pd %>%
+  left_join(icgc_pd_id) %>%
+  mutate(Sample.ID_merge = gsub("_","", Sample.ID)) %>%
+  
+  left_join(fread("data/raw/20220505_ICGC_OV_meth/icgc_sample_id_mapping.tsv") %>%
+             mutate(Sample.ID_merge = gsub("_","", paste0(`Case ID`, `Tumour sample ID`)))%>%
+              dplyr::select(Sample.ID_merge, Sample_time = `Sample time point`, Tissue_type = `Sample type`)) %>%
+  mutate(Sample_Group = case_when(str_detect(Sample_time, "relapse") ~"Relapse",
+                                  str_detect(Sample_time, "metastasis") ~"Metastasis",
+                                  str_detect(Sample_Group, "fallopian") ~"Solid Tissue Normal",
+                                  str_detect(Sample_time, "(?i)primary") ~ "Primary Tumour")) %>%
+  dplyr::select(-Sample.ID_merge, -Sample_time)
+write.csv(icgc_pd, "data/raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv", row.names = FALSE)
+
+Sys.glob("data/raw/*")%>%
+  as.data.frame() %>%
+  `colnames<-` (c("IDAT")) %>%
+  mutate(Project = gsub("data/raw/20220401_|data/raw/20220505_|_meth/IDAT/", "", IDAT)) %>%
+  dplyr::select(Project, IDAT) %>%
+  write.table("data/supporting/idat_mapping.tsv", row.names = F, quote = F, col.names = F)
+  
+```
+
+
+```{bash methylation calling}
+#obtain normalised beta
+bash scripts/1_run_beta_norm.sh data/supporting/idat_mapping.tsv
+
+#obtain p-value from detection
+bash scripts/1_run_beta_pvalue.sh data/supporting/idat_mapping.tsv
+```
+```{bash extract QC information}
+# monitor for job finished then proceed
+running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1)
+finished=$(ls | grep -E "beta_pval_*.o*" | wc -l)
+while [ $finished != $(($running * 2)) ]; do sleep 20; done
+
+
+#extract pvalue for duplicate filtration
+for a in beta_pval*_meth.o*;
+  do
+    project=$(echo $a| cut -d '_' -f 3,4);
+    filename=$(echo $project"_beta_pvalue.csv");
+    cat $a | grep -E '.{8}-.{4}-.{4}-.{4}-.{12}' > data/processed/methylation/$filename;
+    done
+
+#move all the pbs output
+mv norm_beta*.* data/output_error/
+mv beta_pval*.* data/output_error/
+```
+
+```{bash process methylation}
+
+```

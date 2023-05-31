@@ -9,3 +9,26 @@ sites/site*/public/theme/
 textpattern/
 HISTORY.txt
 README.txt
+# text
+*.txt
+*.tsv
+*.csv
+*.xlsx
+# raw data
+*/data/*
+*.idat
+*.IDAT
+*.maf
+*.MAF
+*.vcf
+*.VCF
+# pbs output
+*.o*
+*.e*
+# plots
+*.jpeg
+*.png
+*.pdf
+*.tiff
+*.html
+.Rproj.user
