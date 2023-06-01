@@ -76,9 +76,9 @@ deduplicate_sample <- sample_sheet %>%
     group_by(Patient.ID, Sample_Group, Project) %>%
     filter(pvalue == max(pvalue)) %>%
     ungroup() %>%
-    dplyr::select(Sample.ID, Patient.ID, Sample_Group)
+    dplyr::select(Sample.ID, Patient.ID, Sample_Group, Sample_Name)
 
-fwrite(as.data.table(deduplicate_sample, keep.rownames = ""), paste0(directory, "/data/processed/methylation/",study_name, "_deduplicated_sample.csv"), row.names = F, sep = "\t")
+write.csv(deduplicate_sample, paste0(directory, "/data/processed/methylation/",study_name, "_deduplicated_sample.csv"), row.names = F)
 
 # beta line plot
 beta_plot <- beta_plot_context_annotat(beta_sub, study_name)

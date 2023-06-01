@@ -19,9 +19,13 @@ mkdir -p data/supporting
 mkdir -p data/processed
 mkdir -p data/output_error
 mkdir -p data/processed/methylation
+mkdir -p data/processed/mRNA
 mkdir plots
 mkdir -p plots/methylation
 mkdir -p plots/methylation/HR_gene_line
+mkdir -p plots/mRNA
+mkdir -p plots/mRNA/QC
+
 ```
 
 ```{r setup working directory}
@@ -72,14 +76,14 @@ Sys.glob("data/raw/*")%>%
 bash scripts/1_run_beta_norm.sh data/supporting/idat_mapping.tsv
 
 #obtain p-value from detection
-bash scripts/1_run_beta_pvalue.sh data/supporting/idat_mapping.tsv
+#bash scripts/1_run_beta_pvalue.sh data/supporting/idat_mapping.tsv
 ```
 
 ```{bash extract QC information}
 # monitor for job finished then proceed
 running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1)
 finished=$(ls | grep -E "beta_pval_*.o*" | wc -l)
-while [ $finished != $(($running * 2)) ]; do sleep 20; done
+while [ $finished != $(($running * 2)) ]; do running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); finished=$(ls | grep -E "beta_pval_*.o*" | wc -l); sleep 20; done
 
 
 #extract pvalue for duplicate filtration
@@ -96,7 +100,6 @@ mv beta_pval*.* data/output_error/
 ```
 
 ## Methylation visualisation
-Here
 the normalised beta matrix for methylation will be deduplicated based on p-value for intensity drop-outs
 beta matrix will be subset focusing just around the HR gene region, the gene include BRCA1, BRCA2, RAD51C, RAD51D, BRIP1, PALB2, CHECK2
 CpG will be annotated based on gene promoter
@@ -104,15 +107,19 @@ line plots will be generated for genome context
 ```{bash methylation assessment for HR gene}
 bash scripts/1_beta_visualisation.sh data/supporting/idat_mapping.tsv
 
+#clean output
 running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1)
 finished=$(ls | grep -E "beta_plot_*.o*" | wc -l)
-while [ $finished != $(($running * 2)) ];running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); finished=$(ls | grep -E "beta_plot_*.o*" | wc -l); do sleep 20; done
+while [ $finished != $(($running * 2)) ]; do running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); finished=$(ls | grep -E "beta_plot_*.o*" | wc -l); sleep 20; done
 rm -rf beta_plot_*.*
 ```
 
-
-
 # mRNA preprocessing
 ```{bash mRNA calling}
+bash scripts/2_run_mRNA_edgeR.sh data/supporting/idat_mapping.tsv
+
+#running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1)
+#finished=$(ls | grep -E "mRNA_*.o*" | wc -l)
+#while [ $finished != $(($running * 2)) ]; do running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); #finished=$(ls | grep -E "mRNA_*.o*" | wc -l); sleep 20; done
 
 ```
