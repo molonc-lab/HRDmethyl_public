@@ -1,0 +1,21 @@
+#PBS -l mem=5GB,walltime=16:00:00
+#PBS -r n
+#PBS -m ae
+#PBS -M lijunX@qimrberghofer.edu.au
+#PBS -v normal,tumour,sampleid
+module load msisensor/20170913
+out_dir=${dir}"/msi_icgc/"
+
+#build reference
+if [-f ${out_dir}GRCh37_ICGC_standard_v2_microsatellites.list]; then
+  echo "scan file exists."
+else 
+  msisensor scan -d /reference/genomes/GRCh37_ICGC_standard_v2/GRCh37_ICGC_standard_v2.fa -o ${out_dir}GRCh37_ICGC_standard_v2_microsatellites.list 
+  echo "scan file made."
+fi
+
+#run msi
+msisensor msi -d ${out_dir}GRCh37_ICGC_standard_v2_microsatellites.list -n $normal -t $tumour -o ${out_dir}$sampleid
+rm -f ${out_dir}$sampleid_dis
+rm -f ${out_dir}$sampleid_germline
+rm -f ${out_dir}$sampleid_somatic

@@ -1,0 +1,1 @@
+less /working/genomeinfo/share/analysis/AOCS_-_ICGC_ovarian_cancer_project/AOCS_-_ICGC_ovarian_cancer_project.StudyPairedAnalysis_20220407.tsv | awk -F $"\t" '{printf "%s-%s\t%s-%s\t%s\t%s\n",$16, $19, $55, $58, $88, $90}'| grep -f ${dir}/data/supporting/OV_filtered_samples_lists.csv > ${dir}/data/supporting/AOCS_-_ICGC_ovarian_cancer_project.StudyPairedAnalysis_20220407_msi.tsv

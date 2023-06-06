@@ -76,7 +76,7 @@ Sys.glob("data/raw/*")%>%
 bash scripts/1_run_beta_norm.sh data/supporting/idat_mapping.tsv
 
 #obtain p-value from detection
-#bash scripts/1_run_beta_pvalue.sh data/supporting/idat_mapping.tsv
+bash scripts/1_run_beta_pvalue.sh data/supporting/idat_mapping.tsv
 ```
 
 ```{bash extract QC information}
@@ -118,8 +118,15 @@ rm -rf beta_plot_*.*
 ```{bash mRNA calling}
 bash scripts/2_run_mRNA_edgeR.sh data/supporting/idat_mapping.tsv
 
-#running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1)
-#finished=$(ls | grep -E "mRNA_*.o*" | wc -l)
-#while [ $finished != $(($running * 2)) ]; do running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); #finished=$(ls | grep -E "mRNA_*.o*" | wc -l); sleep 20; done
 
+# clean directory
+running=$(qstat | grep "mRNA_" |wc -l)
+while [ $running != 0 ]; do running=$(qstat | grep "mRNA_" |wc -l); sleep 20; done
+
+# extract DEG counts for group contrast as well as whether silencing effect observed from DEG level
+bash scripts/2_extractDEG.sh
+mv mRNA* data/output_error/
 ```
+```{bash}
+```
+

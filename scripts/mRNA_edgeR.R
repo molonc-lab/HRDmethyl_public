@@ -170,7 +170,8 @@ if(dim(design.mat)[2] == 3){
   print("RAD51C regulated")
   print(table(decideTestsDGE(et12, p.value = 0.05)))
   write.csv(topTags(et12, n= 10000, p.value = 0.05),paste0(output_dir, "/", study_name,"_RAD51C_edgeR.csv"), row.names = T)
-  
+  print("RAD51C p value")
+  print(topTags(et12, n= 10000)["ENSG00000108384",])
   
   #go enrichment
   gene_list <- unlist(mget(substr(rownames(et12),1,15), envir=org.Hs.egENSEMBL2EG,
