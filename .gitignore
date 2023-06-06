@@ -34,4 +34,7 @@ README.txt
 .Rproj.user
 #mis
 *.gz
+*.log
 .Rhistory
+data/processed/*
+data/raw/*

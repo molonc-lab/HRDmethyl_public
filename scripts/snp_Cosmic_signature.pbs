@@ -1,0 +1,14 @@
+#!/bin/bash
+#PBS -M lijun.xu@qimrberghofer.edu.au
+#PBS -N Cosmic_signature
+#PBS -j n
+#PBS -l walltime=10:00:00
+#PBS -l ncpus=1
+#PBS -l mem=60gb
+#PBS -m ae
+#PBS -W umask=0007
+#PBS -v working_dir
+cd ${working_dir}
+module load R/4.0.2
+Rscript ${working_dir}/scripts/snp_Cosmic_signature.R  ${working_dir}
+

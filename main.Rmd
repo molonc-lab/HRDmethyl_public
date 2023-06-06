@@ -20,6 +20,10 @@ mkdir -p data/processed
 mkdir -p data/output_error
 mkdir -p data/processed/methylation
 mkdir -p data/processed/mRNA
+mkdir -p data/processed/VCF
+mkdir -p data/processed/Signatures
+mkdir -p data/processed/Signatures/tables
+mkdir -p data/processed/Signatures/figures
 mkdir plots
 mkdir -p plots/methylation
 mkdir -p plots/methylation/HR_gene_line
@@ -118,7 +122,6 @@ rm -rf beta_plot_*.*
 ```{bash mRNA calling}
 bash scripts/2_run_mRNA_edgeR.sh data/supporting/idat_mapping.tsv
 
-
 # clean directory
 running=$(qstat | grep "mRNA_" |wc -l)
 while [ $running != 0 ]; do running=$(qstat | grep "mRNA_" |wc -l); sleep 20; done
@@ -127,6 +130,17 @@ while [ $running != 0 ]; do running=$(qstat | grep "mRNA_" |wc -l); sleep 20; do
 bash scripts/2_extractDEG.sh
 mv mRNA* data/output_error/
 ```
+# VEP
+```{bash vep annotation of the somatic mutation}
+bash scripts/3_run_vep.sh $dir
+```
+# Mutation Signature 
 ```{bash}
+bash scripts/4_run_cosmic_signature.sh $dir
+```
+
+# MSI ICGC 
+```{bash msi sensor for ICGC ovarian}
+bash scripts/5_run_msisensor.sh
 ```
 
