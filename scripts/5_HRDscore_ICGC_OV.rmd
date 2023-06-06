@@ -1,0 +1,155 @@
+---
+title: "HRDetect_ICGC_OV"
+author: "lijunx"
+date: "March 9, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library("scarHRD")
+library("tidyverse")
+library("data.table")
+library("deconstructSigs")
+library("purrr")
+library("DNAcopy")
+
+outdir = "/working/lab_olgak/lijunX/HRDmethyl_public/data/processed/hrd_icgc/"
+ascat_wgs = "/working/genomeinfo/share/analysis/AOCS_-_ICGC_ovarian_cancer_project/ascat/"
+gap_array = "/working/genomeinfo/share/analysis/AOCS_-_ICGC_ovarian_cancer_project/gap/"
+```
+#WGS HRD score
+```{r}
+segment = Sys.glob(paste0(ascat_wgs,"copynumber/*.tsv"))
+ploidy = Sys.glob(paste0(ascat_wgs,"summary_stats/*.tsv"))
+
+CNV_seg <- map_dfr(segment, ~ as.data.frame(fread(.x)) %>%
+                           mutate(ICGC_ID = substr(.x, 88, 118),
+                                  Chromosome = paste0("chr",as.integer(chromosome)),
+                                  Start_position = start, End_position = end,
+                                  total_cn = tumour.total.cn, A_cn =tumour.minor.cn , B_cn = tumour.major.cn)%>%
+                           mutate(Chromosome = if_else(Chromosome == "chr23", "chrX", Chromosome)))
+
+CNV_summary <-map_dfr(ploidy, ~ as.data.frame(fread(.x, header =T)) %>%
+                              mutate(ICGC_ID = substr(.x,91, 121)))
+
+CNV_full <- CNV_seg %>%
+  left_join(CNV_summary, by ="ICGC_ID")%>%
+  filter(!Chromosome %in% c("chr24","chr25", "chrNA")) %>%
+  select(ICGC_ID, Chromosome, Start_position, End_position,
+         total_cn, A_cn, B_cn, ploidy) 
+
+
+
+CNV_full%>%
+  group_by(ICGC_ID) %>%
+  group_walk(~ {
+    write_tsv(.x, paste0(outdir,"WGS_HRD_score/", .y$ICGC_ID, ".scarHRD.input.txt"))
+    scar_score(paste0(outdir, "WGS_HRD_score/",.y$ICGC_ID, ".scarHRD.input.txt"),
+               reference = "grch37" ,seqz = FALSE, outputdir = paste0(outdir, "WGS_HRD_score/"))
+  }, keep = TRUE)
+
+
+#read in results
+scarHRD_summary <- Sys.glob(paste0(outdir,"WGS_HRD_score/","*_HRDresults.txt"))%>%
+  map_dfr(~as.data.frame(fread(.x, header = T)) %>%
+            separate(col = V1, sep= "_", into = c("ICGC_ID", "Sample_ID")) %>%
+            dplyr::rename(LOH = HRD, TAI = `Telomeric AI`) %>%
+            pivot_longer(cols = c("LOH", "TAI", "LST"), names_to = "HRD_components", values_to = "HRD_values"))
+
+
+sample_pd <- as.data.frame(fread(paste0(outdir, "../../raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"))) %>%
+  separate(col = Sample.ID, sep = "_", into = c("ICGC_ID_1", "ICGC_ID_2", "Sample_ID_1", "Sample_ID_2", "Sample_ID_3", "Sample_ID_4")) %>%
+ unite(col = "ICGC_ID", c("ICGC_ID_1", "ICGC_ID_2"),sep = "-", na.rm = T) %>%
+unite(col = "Sample_ID", c("Sample_ID_1", "Sample_ID_2", "Sample_ID_3", "Sample_ID_4"),sep = "-", na.rm = T)
+
+
+#plot for stacked bar plot
+scarHRD_summary %>%
+  left_join(sample_pd, by = c("ICGC_ID", "Sample_ID")) %>%
+  filter(!is.na(Sample_Group)) %>%
+  group_by(ICGC_ID, Sample_Group) %>%
+  filter(`HRD-sum` >= max(`HRD-sum`)) %>%
+  distinct() %>%
+  ggplot()+
+  geom_bar(aes(x = Sample_Group, y = HRD_values, fill = HRD_components, group = ICGC_ID), position="stack", stat="identity") +
+   facet_wrap(~  ICGC_ID, 
+              scales = "free_x") +
+  scale_y_continuous(limits = c(0,100))+ 
+  geom_hline(yintercept = 42, linetype = "dashed") +
+  scale_fill_manual(values = c("#EABE94","#89c5b3", "#0B775E"))+
+  theme(axis.text.x = element_text( vjust = 0.5))
+
+write.csv(scarHRD_summary, paste0(outdir,"ICGC_OV_WGS_HRD_score.tsv"), row.names = F)
+
+```
+
+#ARRAY HRD score
+```{r}
+segment = Sys.glob(paste0(gap_array,"segments/*.txt"))
+ploidy = Sys.glob(paste0(gap_array,"summary_stats/*.txt"))
+
+CNV_array_seg <- map_dfr(segment, ~ as.data.frame(fread(.x, skip = 1, header = T)) %>%
+                           mutate(SegmentLength = (PosSNPend-PosSNPstart)/1000000) %>%
+                            filter(Chr < 23  & SegmentLength > 10 & (nCN >=2.7 | nCN <= 1.3)) %>%
+                           mutate(ICGC_ID =  gsub(".txt", "", basename(.x)),
+                                  Chromosome = paste0("chr",as.integer(gsub(".5", "",Chr))),
+                                  Start_position = PosSNPstart, End_position = PosSNPend,
+                                  total_cn = nCN, A_cn =CN1 , B_cn = CN2)) %>%
+  dplyr::select(ICGC_ID, Chromosome, Start_position, End_position, total_cn, A_cn, B_cn)
+
+CNV_array_summary <-map_dfr(ploidy, ~ as.data.frame(fread(.x, header =T)) %>%
+                              mutate(ICGC_ID = gsub("_GAPrecognitionInfo.txt", "", basename(.x)))) %>%
+  dplyr::select(ICGC_ID, Ploidy)
+
+CNV_array_full <- CNV_array_seg %>%
+  left_join(CNV_array_summary, by ="ICGC_ID")%>%
+  filter(!Chromosome %in% c("chr24","chr25", "chrNA")) %>%
+  select(ICGC_ID, Chromosome, Start_position, End_position,
+         total_cn, A_cn, B_cn, Ploidy) 
+
+
+
+CNV_array_full%>%
+  group_by(ICGC_ID) %>%
+  group_walk(~ {
+    write_tsv(.x, paste0(outdir,"Array_HRD_score/", .y$ICGC_ID, ".scarHRD.input.txt"))
+    scar_score(paste0(outdir, "Array_HRD_score/",.y$ICGC_ID, ".scarHRD.input.txt"),
+               reference = "grch37" ,seqz = FALSE, outputdir = paste0(outdir, "Array_HRD_score/"))
+  }, keep = TRUE)
+
+
+#read in results
+scarHRD_summary_array <- Sys.glob(paste0(outdir,"Array_HRD_score/","*_HRDresults.txt"))%>%
+  map_dfr(~as.data.frame(fread(.x, header = T)) %>%
+            separate(col = V1, sep= "_", into = c("ICGC_ID", "Sample_ID")) %>%
+            dplyr::rename(LOH = HRD, TAI = `Telomeric AI`) %>%
+            pivot_longer(cols = c("LOH", "TAI", "LST"), names_to = "HRD_components", values_to = "HRD_values"))
+
+
+sample_pd <- as.data.frame(fread(paste0(outdir, "../../raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"))) %>%
+  separate(col = Sample.ID, sep = "_", into = c("ICGC_ID_1", "ICGC_ID_2", "Sample_ID_1", "Sample_ID_2", "Sample_ID_3", "Sample_ID_4")) %>%
+ unite(col = "ICGC_ID", c("ICGC_ID_1", "ICGC_ID_2"),sep = "-", na.rm = T) %>%
+unite(col = "Sample_ID", c("Sample_ID_1", "Sample_ID_2", "Sample_ID_3", "Sample_ID_4"),sep = "-", na.rm = T)
+
+
+#plot for stacked bar plot
+scarHRD_summary_array %>%
+  left_join(sample_pd, by = c("ICGC_ID", "Sample_ID")) %>%
+  filter(!is.na(Sample_Group)) %>%
+  group_by(ICGC_ID, Sample_Group) %>%
+  filter(`HRD-sum` >= max(`HRD-sum`)) %>%
+  distinct() %>%
+  ggplot()+
+  geom_bar(aes(x = Sample_Group, y = HRD_values, fill = HRD_components, group = ICGC_ID), position="stack", stat="identity") +
+   facet_wrap(~  ICGC_ID, 
+              scales = "free_x") +
+  scale_y_continuous(limits = c(0,100))+ 
+  geom_hline(yintercept = 42, linetype = "dashed") +
+  scale_fill_manual(values = c("#EABE94","#89c5b3", "#0B775E"))+
+  theme(axis.text.x = element_text( vjust = 0.5))
+
+write.csv(scarHRD_summary_array, paste0(outdir,"ICGC_OV_HRD_array_score.tsv"), row.names = F)
+
+```

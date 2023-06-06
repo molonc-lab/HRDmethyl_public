@@ -7,7 +7,7 @@
 #PBS -j n
 #PBS -l walltime=10:00:00
 #PBS -l ncpus=2
-#PBS -l mem=60gb
+#PBS -l mem=30gb
 #PBS -m ae
 #PBS -W umask=0007
 #PBS -v working_dir

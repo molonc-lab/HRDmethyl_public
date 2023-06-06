@@ -6,6 +6,7 @@ suppressMessages(suppressWarnings(library("data.table")))
 suppressMessages(suppressWarnings(library("tidyverse")))
 suppressMessages(suppressWarnings(library("deconstructSigs")))
 suppressMessages(suppressWarnings(library("BSgenome.Hsapiens.UCSC.hg19")))
+suppressMessages(suppressWarnings(library("BSgenome.Hsapiens.UCSC.hg38")))
 
 #function for run deconstructsigs
 run_deconstructsigs <- function(data,out_path, out_name, signatures, method = "default", plot=FALSE, cutoff=0.10) {
@@ -75,6 +76,17 @@ icgc_snp <- Sys.glob(paste0(working_dir, "/data/raw/*_ICGC_*_meth/MAFs/*.shc.maf
   mutate(Sample_Name = gsub("-", "_", Sample_Name)) %>%
   dplyr::select(Sample.ID = Sample_Name, chr, pos = Start_Position, ref = Reference_Allele, alt) 
 
+
+
+#tcga
+sigs_input <- mut.to.sigs.input(mut.ref = tcga_snp,
+                                sample.id = "Sample.ID",
+                                chr = "chr", 
+                                pos = "pos", 
+                                ref = "ref", 
+                                alt = "alt",
+                                bsg = BSgenome.Hsapiens.UCSC.hg38)
+
 #load probability data
 cosmic_t <- read_delim(paste0(working_dir,"/data/supporting/signatures_probabilities.txt"),
                        delim = "\t") 
@@ -87,17 +99,6 @@ cosmic_sigs <- as.data.frame(t(cosmic_t)) %>%
   rownames_to_column(var = "Signature") %>%
   mutate(Signature = str_replace(Signature,"Signature ","Sig")) %>%
   column_to_rownames(var = "Signature")
-
-#tcga
-sigs_input <- mut.to.sigs.input(mut.ref = tcga_snp,
-                                sample.id = "Sample.ID",
-                                chr = "chr", 
-                                pos = "pos", 
-                                ref = "ref", 
-                                alt = "alt",
-                                bsg = BSgenome.Hsapiens.UCSC.hg38)
-
-
 
 sig_cosmic_default <- run_deconstructsigs(data = sigs_input, 
                                           out_path = paste0(working_dir, "/data/processed/Signatures/"),
@@ -120,6 +121,18 @@ sigs_input <- mut.to.sigs.input(mut.ref = icgc_snp,
                                 ref = "ref", 
                                 alt = "alt",
                                 bsg = BSgenome.Hsapiens.UCSC.hg19)
+#load probability data
+cosmic_t <- read_delim(paste0(working_dir,"/data/supporting/signatures_probabilities.txt"),
+                       delim = "\t") 
+cosmic_t %<>%
+  select(1:33,-`Substitution Type`,-Trinucleotide) %>%
+  arrange(match(`Somatic Mutation Type`,colnames(sigs_input))) %>%
+  column_to_rownames(var = "Somatic Mutation Type") %>%
+  as.matrix()
+cosmic_sigs <- as.data.frame(t(cosmic_t)) %>%
+  rownames_to_column(var = "Signature") %>%
+  mutate(Signature = str_replace(Signature,"Signature ","Sig")) %>%
+  column_to_rownames(var = "Signature")
 
 sig_cosmic_default <- run_deconstructsigs(data = sigs_input, 
                                           out_path = paste0(working_dir, "/data/processed/Signatures/"),

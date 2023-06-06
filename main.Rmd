@@ -24,6 +24,10 @@ mkdir -p data/processed/VCF
 mkdir -p data/processed/Signatures
 mkdir -p data/processed/Signatures/tables
 mkdir -p data/processed/Signatures/figures
+mkdir -p data/processed/msi_icgc
+mkdir -p data/processed/hrd_icgc
+mkdir -p data/processed/hrd_icgc/WGS_HRD_score
+mkdir -p data/processed/hrd_icgc/Array_HRD_score
 mkdir plots
 mkdir -p plots/methylation
 mkdir -p plots/methylation/HR_gene_line
@@ -143,4 +147,7 @@ bash scripts/4_run_cosmic_signature.sh $dir
 ```{bash msi sensor for ICGC ovarian}
 bash scripts/5_run_msisensor.sh
 ```
+
+#HRD score ICGC
+please run 5_HRDscore_ICGC_OV.rmd
 
