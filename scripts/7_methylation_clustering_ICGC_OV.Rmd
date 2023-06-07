@@ -1,0 +1,569 @@
+---
+title: "reproduce_CIMP_OV"
+author: "lijunx"
+date: "May 14, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("purrr")
+library("data.table")
+library("tidyverse")
+library("ggpubr")
+```
+
+```{r}
+hm450_annotation = "/working/lab_olgak/lijunX/HRDmethyl_public/data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz"
+beta_file = "/working/lab_olgak/lijunX/HRDmethyl_public/data/processed/methylation/ICGC_OV_beta.csv"
+beta_p_value = "/working/lab_olgak/lijunX/HRDmethyl_public/data/processed/methylation/ICGC_OV_beta_pvalue.csv"
+clinical_csv = "/working/lab_olgak/lijunX/HRDmethyl_public/data/raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"
+purity_csv = "/working/lab_olgak/lijunX/HRDmethyl_public/data/processed/ICGC_OV_purity.csv"
+demographic_csv = "/working/lab_olgak/lijunX/HRDmethyl_public/data/supporting/Patch_2015_ICGC_donor.tsv"
+```
+
+
+```{r load methylation}
+#filter sample with better methylation detection
+pvalue_filter <- fread(clinical_csv) %>%
+  left_join(fread(beta_p_value) %>%
+              `colnames<-`(c("Sample_Name", "failed_CpG_fraction"))) %>%
+  filter(Sample_Group == "Primary Tumor") %>%
+  mutate(Patient.ID = substr(Sample.ID, 1,8)) %>%
+  dplyr::select(Patient.ID, Sample_Name, Sample.ID, failed_CpG_fraction) %>%
+  group_by(Patient.ID) %>%
+  filter(failed_CpG_fraction== max(failed_CpG_fraction)) %>%
+  ungroup()
+
+
+purity <- fread(purity_csv) %>%
+  `colnames<-`(c("Sample.ID", "purity")) %>%
+    mutate(Sample.ID = gsub("-", "_", Sample.ID)) %>%
+  right_join(fread(clinical_csv) %>%
+              filter(Sample_Group %in% c("Primary Tumor", "Ascites"))) %>%
+  dplyr::select(Sample.ID, Sample_Name, purity) 
+
+#load beta and apply filter
+beta_matrix <- fread(beta_file) %>%
+  dplyr::select("V1", pvalue_filter$Sample_Name)
+
+```
+
+```{r keep HM450-CGI and filter out CHRX/Y }
+filtered_cgi <- as.data.frame(fread(paste0("gunzip -cq ",hm450_annotation ))) %>%
+  filter(!is.na(CGI) & !CpG_chrm %in% c("chrX", "chrY") ) 
+
+filtered_cgi %>%
+  group_by(CGIposition) %>%
+  summarise(n=n())
+
+filtered_cgi %>%
+  group_by(CpG_chrm) %>%
+  summarise(n=n())
+```
+
+
+```{r first filter}
+print(paste0("pre-filtered probe number:", length(beta_matrix$V1)))
+beta_matrix <- beta_matrix %>%
+  filter(V1 %in% filtered_cgi$probeID)
+print(paste0("post-filtered probe number:", length(beta_matrix$V1)))
+```
+
+```{r move non-variable}
+sdlist<- beta_matrix %>%
+	gather("Sample.ID", "beta", -V1) %>%
+	group_by(V1) %>%
+	summarise(SD = sd(beta))
+  km_2_clusters <- kmeans(sdlist$SD, centers = 2)
+  
+  
+filter_variable_cgi <- cbind(sdlist,km_2_clusters$cluster) %>%
+  dplyr::select(V1, SD, cluster = `km_2_clusters$cluster`)
+
+filter_variable_cgi %>%
+  mutate(cluster = as.character(cluster)) %>%
+  ggplot(aes(x = SD, group = cluster, fill = cluster))+
+  geom_density( alpha = 0.7)
+
+```
+```{r second filter out non-variable CGI}
+high_variable_cgi <- filter_variable_cgi %>%
+  group_by(cluster) %>%
+  summarise(avg = mean(SD)) %>%
+  ungroup() %>%
+  filter(avg == max(avg))
+
+print(paste0("pre-filtered probe number:", length(beta_matrix$V1)))
+ beta_matrix<-  beta_matrix %>%
+  filter(V1 %in% unlist(filter_variable_cgi[which( filter_variable_cgi$cluster == high_variable_cgi$cluster), "V1"]) )
+print(paste0("post-filtered probe number:", length(beta_matrix$V1)))
+```
+
+
+```{r nnls for purity correction}
+library(NMF)
+
+A_matrix <- purity %>%
+              filter(!is.na(purity)) %>%
+  mutate(cancer = purity, infiltrate = 1- purity)%>%
+               dplyr::select(Sample_Name, cancer, infiltrate) 
+
+X_matrix <- beta_matrix %>%
+  gather("Sample_Name", "beta", -V1) %>%
+  spread(V1, beta) 
+
+#remove missing purity
+purity_sample <-intersect(A_matrix$Sample_Name,X_matrix$Sample_Name)
+
+
+A_matrix <-A_matrix %>%
+  filter(Sample_Name %in% purity_sample) %>%
+  column_to_rownames("Sample_Name") 
+
+
+X_matrix <- X_matrix %>%
+  filter(Sample_Name %in% purity_sample) %>%
+  column_to_rownames("Sample_Name") 
+
+Sest <- t(NMF::.fcnnls(as.matrix(A_matrix), as.matrix(X_matrix))$coef)
+
+#assess the number of clipped values for cancerous probes and infiltrate probes
+diff_index_infiltrate <- Sest[,2] >1
+diff_index_cancer <- Sest[,1] >1
+print(paste0("clipped infiltrate probes %:", (sum(diff_index_infiltrate)/length(diff_index_infiltrate) * 100), "(", sum(diff_index_infiltrate), ")"))
+print(paste0("mean:", mean(Sest[diff_index_infiltrate,2]), ", min:", min(Sest[diff_index_infiltrate,2]), ", max:", max(Sest[diff_index_infiltrate,2])))
+
+print(paste0("clipped cancer probes %:", (sum(diff_index_cancer)/length(diff_index_cancer) * 100), "(", sum(diff_index_cancer), ")"))
+
+#clipping to [0,1] interval to fit constraints
+Sest_clipped <- Sest
+Sest_clipped[,1] <- pmax( 0, pmin(Sest[,1], 1))
+Sest_clipped[,2] <- pmax( 0, pmin(Sest[,2], 1))
+
+#S is the adjusted proportion
+#A matrix is amount of infiltration in each patient
+#first step is to make indS to remove impact from infiltration
+Sest_infiltrate_matrix <- do.call(cbind, lapply(A_matrix$infiltrate, function(x) x * Sest_clipped[,2])) %>%
+  `colnames<-` (rownames(A_matrix))
+indS <-(X_matrix -t(Sest_infiltrate_matrix))
+
+indS<-as.data.frame(mapply("/", as.data.frame(indS), A_matrix[1]) ) 
+rownames(indS) <- row.names(A_matrix)
+
+
+#assess the number of clipped PROBES
+neg_df <- indS <0
+print(paste0("% clipped neg probes : ",sum(neg_df)/ length(neg_df)* 100, "(", sum(neg_df), ")"))
+
+pos_df <- indS >1
+print(paste0("% clipped pos probes : ",sum(pos_df)/ length(pos_df)* 100, "(", sum(pos_df), ")"))
+
+indS_clipped <- indS 
+indS_clipped[indS >1] = 1
+indS_clipped[indS <0] = 0
+
+write.csv(indS_clipped, "ICGC_OV_corrected_methylation_matrix", row.names = T)
+
+```
+
+```{r plot the evolution of standard deviation before and after purity correction}
+
+adjusted_CpG <- indS_clipped%>%
+  mutate(Sample.ID = rownames(indS_clipped)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  group_by(CpG) %>%
+  summarise(sdv = sd(beta)) %>%
+  left_join(filter_variable_cgi %>%
+              filter(cluster == 2) %>%
+              dplyr::select(CpG = V1, pre_adjusted_sd = SD))
+
+
+adjusted_CpG %>%
+  dplyr::rename(post_adjusted_sd = sdv) %>%
+  gather("filter", "SD", -CpG)  %>%
+  ggplot(aes(x = SD, group = filter, fill = filter))+
+  geom_density(alpha= 0.7)
+
+```
+
+```{r remove age related probes}
+#as we did not perform this study under a pan-cancer context, we will assess each probe and remove the ones that have significant correlation with age
+age_correlation <- indS_clipped%>%
+  mutate(Sample.ID = rownames(indS_clipped)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  dplyr::rename(Sample_Name = Sample.ID) %>%
+  left_join(fread(clinical_csv) %>%
+              dplyr::select(Sample.ID, Sample_Name)) %>%
+  mutate(Patient.ID= substr(Sample.ID,1, 8)) %>%
+    left_join(fread(demographic_csv) %>%
+                mutate(Patient.ID =gsub("-","_",submitted_donor_id))%>%
+                dplyr::select(Patient.ID, age = donor_age_at_diagnosis))
+
+
+fitted_models = age_correlation%>%
+  group_by(CpG) %>%
+  group_map(~ lm(beta ~age, data =.x))
+
+age_correlation_p <-lapply(fitted_models, function(x) summary(x)$coefficients[,4][2])
+
+#number of probes that is likely to be age correlated
+print(paste0("probes that have correlation p-value with age <0.05, number:",sum(age_correlation_p<0.05)))
+which(age_correlation_p<0.05)
+
+#list of probes
+age_correlated_cpg <- age_correlation[which(age_correlation_p<0.05), "CpG"]
+
+indS_clipped_age_filtered <- indS_clipped[!names(indS_clipped) %in% age_correlated_cpg]
+print(paste0("pre-filter number of CpG: ", length(indS_clipped)))
+print(paste0("post-filter number of CpG: ",length(indS_clipped_age_filtered)))
+
+
+
+write.csv(indS_clipped_age_filtered, "preprocessed_beta_matrix_for_clustering.csv", row.names = T)
+```
+
+This chunk is from https://github.com/BoevaLab/CIMP_etiology_oncogenic_transformation/blob/main/Deciphering_CIMP_Analysis.ipynb
+I made some slight adaption and run under python/3.9.13
+```{python}
+# general 
+from __future__ import division
+import numpy as np
+import pandas as pd
+import xenaPython as xena
+import re
+import os
+from collections import Counter
+import csv
+from tqdm.notebook import trange, tqdm
+
+# clustering
+from sklearn.cluster import SpectralClustering
+from sklearn.metrics import silhouette_score,silhouette_samples
+from sklearn.preprocessing import StandardScaler
+import networkx as nx
+import numpy.linalg as LA
+
+# for clustering comparison
+from sklearn.cluster import AgglomerativeClustering, KMeans, AffinityPropagation
+from sklearn.mixture import GaussianMixture
+
+# plotting
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import seaborn as sns
+
+# statistical tests
+from scipy.stats import mannwhitneyu, kruskal, chisquare, ks_2samp, fisher_exact, ttest_ind, pointbiserialr, chi2_contingency, pearsonr, spearmanr
+
+# statistical annotations
+from statannot import add_stat_annotation
+
+# dim reduction
+import umap
+
+from netneurotools import cluster
+
+cancer_to_keep = []
+cancer_to_keep = ["OV"]
+
+meth_data_pc = []
+meth_data_pc =pd.read_csv("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/preprocessed_beta_matrix_for_clustering.csv", index_col=0)
+
+std_sc_data = []
+std_sc = StandardScaler()
+std_sc_data = std_sc.fit_transform(meth_data_pc)
+
+reducer = umap.UMAP(n_components=2)
+umap_red_data= []
+umap_red_data = reducer.fit_transform(std_sc_data)
+
+new_meth_data_pc = {}
+new_meth_data_pc["OV"] =  meth_data_pc
+
+def get_consensus_matrix_clustering(meth_data_pc,cancer_to_keep,triple_cluster_cancers,n_runs,kernel):
+#     Parameters: meth_data_pc (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_cpg) (rows=patients,columns=cpg)
+#             cancer_to_keep (list): names of cancer types
+#             triple_cluster_cancers (list): names of cancer types with 3 methylation groups
+#             n_runs (int): number of runs for consensus clustering (avoid randomness due to init)
+#             kernel (str): either "NN" or "aff", to compute from a preexisting affinity matrix or not
+#     Returns: consensus_matrix (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_runs) (rows=patients,columns=runs)
+#             affinity_matrix (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_pat) 
+#                            corresponding to affinity between pairs of patients (rows=patients,columns=patients)
+    if kernel=="NN":
+        affinity_matrix = {}
+    else:
+        affinity_matrix = meth_data_pc
+    consensus_matrix = {cancer: [] for cancer in cancer_to_keep}
+    for r in tqdm(range(n_runs)):
+        agglomerative_clustering_pc = {}
+        for cancer in cancer_to_keep:
+            print(cancer)
+            if cancer in triple_cluster_cancers:
+                if kernel=="NN":
+                    agglomerative = SpectralClustering(n_clusters=3,affinity="nearest_neighbors",n_neighbors=10)
+                else:   
+                    agglomerative = SpectralClustering(n_clusters=3,affinity="precomputed")
+            else:
+                if kernel=="NN":
+                      agglomerative = SpectralClustering(n_clusters=2,affinity="nearest_neighbors",n_neighbors=10)
+                else:
+                    agglomerative = SpectralClustering(n_clusters=2,affinity="precomputed")
+            if kernel=="NN":       
+                agglomerative.fit(meth_data_pc[cancer].values)
+                affinity_matrix[cancer] = agglomerative.affinity_matrix_ 
+                affinity_matrix[cancer] = affinity_matrix[cancer].todense()
+            else:
+                agglomerative.fit(meth_data_pc[cancer])
+            agglomerative_clustering_pc[cancer] = pd.DataFrame(agglomerative.labels_,columns=["cluster"])
+            agglomerative_clustering_pc[cancer] = agglomerative_clustering_pc[cancer]+1
+            if len(consensus_matrix[cancer])==0:
+                consensus_matrix[cancer] = agglomerative_clustering_pc[cancer]
+            else:
+                consensus_matrix[cancer] = pd.concat([consensus_matrix[cancer],agglomerative_clustering_pc[cancer]],axis=1)
+    return consensus_matrix, affinity_matrix
+
+consensus_matrix_spectral, affinity_matrix = get_consensus_matrix_clustering(new_meth_data_pc, ["OV"], [],1,"NN")
+
+consensus_clustering_spectral = {}
+cluster_memb_dir = "/working/lab_nicw/lijunX/20220505_ICGC_OV_meth"
+for cancer in tqdm(cancer_to_keep):
+    consensus_clustering_spectral[cancer] = pd.DataFrame(cluster.find_consensus(consensus_matrix_spectral[cancer].values, seed=1234),columns=["cluster"],index=new_meth_data_pc[cancer].index)
+    consensus_clustering_spectral[cancer] = consensus_clustering_spectral[cancer].reset_index()
+    pd.DataFrame(consensus_clustering_spectral[cancer]).to_csv(os.path.join(cluster_memb_dir,cancer+"_cluster_memb_new.csv"))
+
+for cancer in tqdm(cancer_to_keep):
+    consensus_clustering_spectral[cancer] = consensus_clustering_spectral[cancer].set_index("id")
+
+
+sign_cpg_dir = "/working/lab_nicw/lijunX/20220505_ICGC_OV_meth"
+
+def get_sign_kw_louvain(meth_data_pc, cancer_to_keep, consensus_clustering):
+#     Parameters: meth_data_pc (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_cpg) (rows=patients,columns=cpg)
+#             cancer_to_keep (list): names of cancer types
+#             consensus_clustering (dict): keys are cancer types, values are pd.DataFrame (n_pat,1) (rows=patients, column=cluster membership)
+#     Returns: kw (dict): keys are cancer types, values are list of sign. cpg probes for 
+    kw = {}
+    for cancer in tqdm(cancer_to_keep):
+        kw[cancer]=[]
+        positions = meth_data_pc[cancer].columns
+        ind_cl_1 = np.where(consensus_clustering[cancer]["cluster"].values==1)[0]
+        ind_cl_2 = np.where(consensus_clustering[cancer]["cluster"].values==2)[0]
+        ind_cl_3 = np.where(consensus_clustering[cancer]["cluster"].values==3)[0]
+        print(cancer)
+        if len(np.unique(consensus_clustering[cancer]["cluster"].values))==2:
+            meth_cl_1 = meth_data_pc[cancer].iloc[ind_cl_1].copy()
+            meth_cl_2 = meth_data_pc[cancer].iloc[ind_cl_2].copy()
+            for pos in tqdm(positions):
+                kw[cancer].append(kruskal(meth_cl_1[pos],
+                        meth_cl_2[pos])[1])
+        elif len(np.unique(consensus_clustering[cancer]["cluster"].values))==3:
+            meth_cl_1 = meth_data_pc[cancer].iloc[ind_cl_1].copy()
+            meth_cl_2 = meth_data_pc[cancer].iloc[ind_cl_2].copy()
+            meth_cl_3 = meth_data_pc[cancer].iloc[ind_cl_3].copy()
+            for pos in tqdm(positions):
+                kw[cancer].append(kruskal(meth_cl_1[pos],
+                        meth_cl_2[pos],
+                        meth_cl_3[pos])[1])
+        else:
+            print("The cancer {} is not taken into consideration (too many clusters)".format(cancer))
+            continue
+        ind_sign = np.where(np.array(kw[cancer])<(0.05/len(kw[cancer])))[0]
+        print("There are {} significantly different positions between clusters for cancer type {}".format(len(ind_sign),cancer))
+        sign_pos=[meth_data_pc[cancer].columns[i] for i in ind_sign]
+        pd.DataFrame(sign_pos).to_csv(os.path.join(sign_cpg_dir,cancer+"_sign_cpg_spectral.csv"))
+    return kw
+
+kw_snf = get_sign_kw_louvain(new_meth_data_pc, ["OV"], consensus_clustering_spectral)
+
+sign_pos_spectral = {}
+for cancer in cancer_to_keep:
+    sign_pos_spectral[cancer] = pd.read_csv(os.path.join(sign_cpg_dir,cancer+"_sign_cpg_spectral.csv")).set_index("Unnamed: 0")
+
+def get_avg_methylation_snf(sign_pos, meth_data_pc, consensus_clustering, cancer_order):
+#     Parameters: meth_data_pc (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_cpg) (rows=patients,columns=cpg)
+#             sign_pos (dict): keys are cancer types, values are pd.DataFrame (n_sign_pos,1) (rows=sign_pos,)
+#             consensus_clustering (dict): keys are cancer types, values are pd.DataFrame (n_pat,1) (rows=patients, column=cluster membership)
+#             cancer_order (list): list of cancer types in the KS order
+#     Returns: avg_meth (pd.Df): the average beta values over significant positions (n_cancers,n_clusters) (rows=cancer,column=cluster number)
+    avg_meth = {}
+    for cancer in cancer_order:
+        avg_meth[cancer] = []
+        for i in np.unique(consensus_clustering[cancer]["cluster"].values):
+            avg_meth[cancer].append(np.round(np.mean(meth_data_pc[cancer].iloc[np.where(consensus_clustering[cancer]["cluster"].values==i)[0]][sign_pos[cancer].values.ravel()].mean()),2))
+    return pd.DataFrame.from_dict(avg_meth, orient='index')
+
+avg_meth_snf_spectral = get_avg_methylation_snf(sign_pos_spectral, new_meth_data_pc, consensus_clustering_spectral, cancer_to_keep)
+avg_meth_snf_spectral.columns=[1,2]
+avg_meth_snf_spectral
+```
+
+
+```{r umap visualisation of the clustering}
+library(uwot)
+library (cluster)
+library(vegan)
+
+indS_clipped_age_filtered <- as.data.frame(fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/preprocessed_beta_matrix_for_clustering.csv", header = T)) %>%
+  column_to_rownames("V1")
+
+dim(indS_clipped_age_filtered)
+cluster_python <- fread("OV_cluster_memb_new.csv") %>%
+              dplyr::select(Sample.ID = index, cluster)
+cpg_scaled <- scale(indS_clipped_age_filtered)
+
+dis = daisy(cpg_scaled)
+plot(silhouette(cluster_python$cluster, dis),col=c("red","blue"), main ="")
+abline(v = 0.07, col="red", lty=2)
+
+cpg_umap <- umap(cpg_scaled, n_neighbors = 10, learning_rate = 0.5, init ="random")
+
+cpg_umap
+as.data.frame(cpg_umap) %>%
+  `colnames<-` (c("umap1", "umap2")) %>%
+  mutate(Sample_Name = rownames(cpg_scaled)) %>%
+  left_join(fread("OV_cluster_memb_new.csv") %>%
+              dplyr::select(Sample_Name= index, cluster)) %>%
+  left_join(fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/ICGC_OV_pd.csv") %>%
+  dplyr::select(Sample_Name, Sample.ID)) %>%
+  left_join(fread("/working/lab_nicw/lijunX/TCGA_ICGC_methylation_list.tsv") %>%
+              filter(Methylation != "No") %>%
+              mutate(Methylation = gene) %>%
+              dplyr::select(Sample.ID, Methylation)) %>%
+  mutate(Methylation = if_else(is.na(Methylation), "No", Methylation)) %>%
+  mutate(cluster = case_when(cluster == 1 ~ "High methylation group",
+                           cluster == 2 ~ "Low methylation group")) %>%
+  ggplot(aes(x= umap1, y =umap2, colour = cluster, fill = Methylation))+
+geom_point( shape = 21)+
+  scale_color_manual(values = c("High methylation group" = "grey", "Low methylation group" = "purple"))+
+  scale_fill_manual(values = c("BRCA1" = "green", "RAD51C" = "blue", "No"= "grey"))
+  theme_bw()+
+  theme(axis.title = element_blank(), axis.ticks = element_blank(), axis.text = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+ggsave("umap_reduction_validation_clustering.pdf")
+```
+# assess cluster and differentiated CpG
+```{r}
+positive_cpg <- fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/OV_sign_cpg_spectral.csv", header = T) %>%
+  `colnames<-` (c("rowname", "CpG"))
+
+normal_ref <- fread(clinical_csv) %>%
+   filter(str_detect(Sample_Group, "Normal"))
+normal_beta <- fread(beta_file) %>%
+   dplyr::select("V1",  normal_ref$Sample_Name)  %>%
+   filter(V1 %in% positive_cpg$CpG) %>%
+  # filter(V1 %in% colnames(indS_clipped_age_filtered)) %>%
+   gather("Sample.ID", "beta", -V1) %>%
+   dplyr::rename(CpG = V1) %>%
+   mutate(cluster ="ref") %>%
+   dplyr::select(Sample.ID, CpG, beta ,cluster)
+   
+#group check for cimp
+tumour_beta <- indS_clipped_age_filtered %>%
+  mutate(Sample.ID = rownames(indS_clipped_age_filtered)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  left_join(fread("OV_cluster_memb_new.csv") %>%
+              dplyr::select(Sample.ID = index, cluster)) %>%
+  filter(CpG %in% c(positive_cpg$CpG)) %>%
+  mutate(cluster = as.character(cluster)) 
+
+#visualse mean value among three groups
+rbind(tumour_beta, normal_beta) %>%
+  group_by(CpG, cluster) %>%
+  summarise(mean_beta = mean(beta)) %>%
+  ggplot(aes(x = cluster, y = mean_beta, fill = cluster)) +
+  geom_violin(width=1) +
+    geom_boxplot(width=0.1, color="black", alpha=0.2) +
+  stat_compare_means()+
+  scale_fill_manual(values = c("1"="red", "2" = "blue", "ref" = "grey"))
+
+library(FSA)
+# assess difference
+results <- rbind(tumour_beta, normal_beta) %>%
+  mutate(cluster = case_when(cluster == "1" ~ "high",
+                             cluster == "2" ~ "low",
+                             TRUE ~ cluster)) %>%
+  mutate(cluster = factor(cluster, levels = c("high", "low", "ref"))) %>%
+  group_by(CpG) %>%
+  group_map(~ as.data.frame(dunnTest(beta ~ cluster, data =.x , method = "bh")$res) %>%
+              mutate(CpG = unique(.x$CpG)),.keep = T)
+
+results <- do.call("rbind", results)
+results$P.adj_multi_CpG <- results$P.adj *length(unique(results$CpG))
+
+results %>%
+  group_by(CpG) %>%
+  filter(sum(P.adj_multi_CpG < 0.05)> 0) %>%
+  ungroup() %>%
+  mutate(log10_q = log10(P.adj_multi_CpG)) %>%
+  ggplot(aes(color = CpG, x= Comparison, y = log10_q))+
+  geom_jitter()+
+  theme(legend.position = "none")+
+  geom_hline(yintercept =-1.3 )
+
+results %>%
+  filter(Comparison == "low - ref" & P.adj_multi_CpG < 0.05)
+  
+```
+```{r}
+library("karyoploteR")
+library("GenomicRanges")
+
+
+# withouth considering normal 
+CpG_profile <- indS_clipped_age_filtered %>%
+  mutate(Sample.ID = rownames(indS_clipped_age_filtered)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  left_join(fread("OV_cluster_memb_new.csv") %>%
+              dplyr::select(Sample.ID = index, cluster)) %>%
+   filter(CpG %in% c(positive_cpg$CpG)) %>%
+  mutate(cluster = as.character(cluster)) %>%
+  rbind(., normal_beta)  %>%
+  left_join(fread(paste0("gunzip -cq ",hm450_annotation )) %>%
+               dplyr::select(CHR = CpG_chrm, Start = CpG_beg, End = CpG_end ,CpG = probeID, geneNames, CGI, CGIposition))
+dmg_list <- CpG_profile %>%
+  dplyr::select(CpG, geneNames) %>%
+  distinct()
+dmg_list <-table(unlist(lapply(dmg_list$geneNames, function(x) unique(unlist(strsplit(x, split = ";"))))))
+dmg_list[dmg_list >10]
+
+CpG_grange <- makeGRangesFromDataFrame(CpG_profile %>%
+  group_by(CpG, cluster, CHR, Start, End) %>%
+  summarise(average_beta = mean(beta))%>%
+  mutate(color =case_when(cluster == 1 ~ "red",
+                          cluster == 2 ~ "blue",
+                          cluster == "ref" ~ "grey")), keep.extra.columns = T, ignore.strand =T, start.field = "Start", end.field = "End") 
+
+pdf("cluster_coverage_pos.pdf", height = 5, width =5)
+kp <- plotKaryotype(plot.type = 2, chromosomes = paste0("chr",seq(1:22)))
+kpPoints(kp,data = CpG_grange, y = CpG_grange@elementMetadata@listData$average_beta, col = CpG_grange@elementMetadata@listData$color, cex = 0.5)
+kpPlotDensity(kp, data=CpG_grange, data.panel=2,r0=0, r1=0.5)
+dev.off()
+
+
+#investigation of the significant CpG from low - ref
+low_ref_sig_CpG <- results %>%
+  filter(Comparison == "low - ref" & P.adj_multi_CpG < 0.05)%>%
+  left_join(fread(paste0("gunzip -cq ",hm450_annotation )) %>%
+               dplyr::select(CHR = CpG_chrm, Start = CpG_beg, End = CpG_end ,CpG = probeID, geneNames, CGI, CGIposition))
+
+# enlist the gene
+table(unlist(lapply(low_ref_sig_CpG$geneNames, function(x) unique(unlist(strsplit(x, split = ";"))))))
+low_ref_sig_CpG_grange <- makeGRangesFromDataFrame(low_ref_sig_CpG, keep.extra.columns = T, ignore.strand =T, start.field = "Start", end.field = "End")
+
+kp <- plotKaryotype(plot.type = 2, chromosomes = paste0("chr",seq(1:22)))
+kpPoints(kp,data = low_ref_sig_CpG_grange, y = low_ref_sig_CpG_grange@elementMetadata@listData$Z)
+```
+#IDH1 status in cluster 2 -- are they wt?
+```{r}
+fread("OV_cluster_memb_new.csv") %>%
+              dplyr::select(Sample_Name = index, cluster) %>%
+  filter(cluster == 2) %>%
+  left_join(fread(clinical_csv)) 
+
+
+fread("idh1_status.maf") %>%
+  dplyr::select(V16, status = V26) %>%
+  distinct()
+
+```
+
