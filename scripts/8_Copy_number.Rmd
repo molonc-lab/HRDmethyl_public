@@ -1,0 +1,99 @@
+---
+title: "copy_number exploration"
+author: "Lijun xU"
+date: "2023-07-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("purrr")
+library("data.table")
+library("tidyverse")
+library("ggplot2")
+```
+
+
+```{r directory}
+TCGA_raw_cnv = "../data/raw/*TCGA_*_meth/copynumber/*.gene_level_copy_number.v36.tsv"
+TCGA_raw_cnv_sample = "../data/raw/*TCGA_*_meth/copynumber/*cn_sample.tsv"
+oncoKB_list <- "../data/supporting/cancerGeneList_ONCOKB_ver_20230412.tsv"
+tcga_icgc_methylation_list <- "../data/processed/TCGA_ICGC_methylation_list.tsv"
+```
+
+```{r}
+tcga_icgc_methylation_list <- fread(tcga_icgc_methylation_list) %>%
+  filter(Project != "TGCT") %>%
+  mutate(Methylation = if_else(Methylation != "No", gene, Methylation)) %>%
+  dplyr::select(-gene) %>%
+  distinct() %>%
+  group_by(Sample.ID, Project) %>%
+  filter(!(n() >1 &Methylation == "No")) %>%
+  ungroup()
+
+cnv_sample <- Sys.glob(TCGA_raw_cnv_sample)%>%
+  map_dfr(~fread(.)) %>%
+  separate_rows(c("Case ID", "Sample ID", "Sample Type"), sep = ", ") %>%
+  filter(`Sample Type` == "Primary Tumor") %>%
+  dplyr::select(File.Name = `File Name`, Sample.ID = `Sample ID`) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1, 15)) %>%
+  left_join(tcga_icgc_methylation_list )
+
+oncoKB_list <- fread(oncoKB_list) %>%
+  pull(1)
+
+
+cnv <- Sys.glob(TCGA_raw_cnv)%>%
+  map_dfr(~ fread(.)%>%
+            filter(gene_name %in% oncoKB_list) %>%
+            mutate(Sample = basename(.x)))
+
+cnv_meth <- cnv_meth %>%
+  dplyr::select(gene_id, gene_name, copy_number, min_copy_number, max_copy_number, File.Name = Sample) %>%
+  right_join(cnv_sample, by = "File.Name") %>%
+  distinct()
+      
+```
+```{r}
+ploidy <- fread("../data/processed/TCGA_ABSOLUTE_purity.txt") %>%
+  dplyr::select(Sample.ID = array, ploidy)
+cnv_meth %<>%
+  mutate(level = if_else(min_copy_number != max_copy_number, "partial", "whole")) %>%
+  dplyr::select(-min_copy_number, -max_copy_number, -File.Name)
+
+
+cnv_meth <- cnv_meth %>%
+  inner_join(ploidy) %>%
+  filter(!is.na(copy_number), !is.na(ploidy), Project %in% c("BC", "UCEC", "STAD", "LGG", "LIHC")) %>%
+  mutate(ploidy = as.integer(ploidy),
+         change = case_when(copy_number > ploidy ~"Gain", 
+                            copy_number < ploidy ~ "Loss",
+                            copy_number == ploidy ~ "Unchanged")) %>%
+  group_by(gene_name, Methylation, change, Project) %>%
+  summarise(n=n()) %>%
+  ungroup() 
+
+cnv_meth_prev <- cnv_meth %>%
+  filter(Project %in% c("BC", "UCEC", "STAD", "LGG", "LIHC")) %>%
+  group_by(gene_name, Project, Methylation) %>%
+  mutate(prevalence = n/sum(n), total = sum(n)) %>%
+  filter(change != "Unchanged")
+
+cnv_meth_prev_un <- cnv_meth_prev %>%
+  filter(Methylation == "No")
+
+
+cnv_meth_prev %>%
+  filter(Methylation != "No") %>%
+  filter(total >2) %>%
+  left_join(cnv_meth_prev_un %>%
+              ungroup()%>%
+              dplyr::select(gene_name, Project, unmethyl_prevalence = prevalence, change), by = c("gene_name", "change","Project")) %>%
+  ggplot(aes(x = unmethyl_prevalence, y = prevalence, colour = change))+
+  geom_point(alpha = 0.7)+
+  facet_wrap(~Project+Methylation)+
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0, linetype = 2)+
+  xlim(c(0,1))
+
+```

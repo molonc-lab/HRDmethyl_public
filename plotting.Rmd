@@ -1,0 +1,181 @@
+---
+title: "20230405_scripts_paper"
+author: "lijunx"
+date: "April 5, 2023"
+output: html_document
+---
+```{r setup, include=FALSE}
+library("data.table")
+library("purrr")
+library("tidyverse")
+library("scales")
+library("ComplexHeatmap")
+library("rstatix")
+library("ggrepel")
+library("ggplot2")
+library("gridExtra")
+library("readxl")
+library("circlize")
+library("ggbeeswarm")
+```
+#function
+```{r function}
+percent <- function(x, digits = 2, format = "f", ...) {      # Create user-defined function
+  paste0(formatC(x * 100, format = format, digits = digits, ...), "%")
+}
+
+change_facet_strip_color <- function(ggplot, color_list){
+  plot_gtable <- ggplot_gtable(ggplot_build(ggplot))
+  stripr <-  which(grepl('strip-t',plot_gtable$layout$name))
+  fills <- color_list
+  k <- 1
+ for (i in stripr) {
+    j <- which(grepl('rect', plot_gtable$grobs[[i]]$grobs[[1]]$childrenOrder))
+    plot_gtable$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+    k <- k+1
+ }
+  return(plot_gtable)
+}
+
+```
+#palette
+```{r}
+methylation_color = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "grey")
+methylation_color_brca1 = c("Yes" = "#93a667","No" = alpha("grey", 0.6))
+methylation_color_rad51c = c("Yes" = "#7BB2D9","No" = alpha("grey", 0.6))
+col = list(alt = c("MUT" = "#EE8A8A", "Conseq" = "#616161", "NA" = "white"),
+           Methylation = methylation_color,
+           CIMP = c("CIMP-" = "#D6F8D6", "CIMP+" = "#7FC6A4", "CIMPi" = "#B0C7BD", "NA" = "white"),
+           STAD_subtype = c("EBV" = "#CB6434", "CIN" = "#E09A75", "MSI" = "#F5CFB5", "NA" = "white"),
+           LGG_subtype = c("IDHmut codel" = "#BB9F23", "IDHmut non-codel" = "#DDCE74", "IDHwt" = "#FFFCC5", "NA" = "white"),
+           UCEC_subtype = c("CN HIGH" = "#3F72AF", "MSI" = "#90caf9", "NA" = "white"),
+           TGCT_subtype = c("Mixed Germ Cell Tumor" = "#DC778D", "Yolk Sac Tumor" = "#E4B1BC","NA" = "white"),
+           BC_subtype = c("LumA" = "#AAA1C8", "LumB" = "#D5C6E0", "Basal" = "#192A51", "Normal" ="#F5E6E8" , "Her2" = "#967AA1", "NA" = "white"),
+           Meth_lvl = c("HM"= "#F9A620","LM"= "#F8DD83","NA" = "white"))
+
+col_sig = list(Methylation = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "white"))
+
+methylation_lvl <- c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")
+project_lvl <- c("OV", "TGCT", "STAD","LGG","BC", "UCEC", "LIHC", "COAD", "LUSC", "HNSC", "THCA")
+hr_gene_list <- c("BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D")
+```
+# Supplementary plot
+```{r Supplementary 1 data availability}
+library(eulerr)
+# anntoate ICGC
+primary_tumour_ICGC <- fread("data/raw/20220505_ICGC_OV_meth/icgc_sample_id_mapping.tsv") %>%
+               filter(`Sample time point` == "primary") %>%
+               mutate(Sample.ID_merge = gsub("_","", paste0(`Case ID`, `Tumour sample ID`))) 
+# beta
+Deduplicated_beta <- map_dfr(Sys.glob("data/processed/methylation/*deduplicated_sample.csv"),
+                             ~ fread(.x, header = T, na.strings = "", fill = T) %>%
+  mutate(Project = gsub("_deduplicated_sample.csv", "", basename(.x)),
+  Sample_Group = gsub("Tumour", "Tumor", Sample_Group)))
+
+#mRNA
+mRNA_sample <- map_dfr(Sys.glob("data/raw/*/mRNA/TCGA_*_sample.tsv"),
+                       ~ fread(.x, header = T)) %>%
+  filter(`Sample Type` == "Primary Tumor")
+mRNA_sample_ICGC <- fread(Sys.glob("data/raw/*/mRNA/ICGC*_sample.csv")) %>%
+  filter(SampleType == "Primary tumour") %>%
+  mutate(donorLabel = gsub("-", "_", donorLabel))
+
+#copy number 
+copy_number_sample <- map_dfr(Sys.glob("data/raw/*/copynumber/TCGA_*cn_sample.tsv"),
+                       ~ fread(.x, header = T)) %>%
+  filter(str_detect(`Sample Type`, "Primary Tumor"))
+copy_number_sample$`Case ID` <- unlist(lapply(copy_number_sample$`Case ID`, function(x) unique(unlist(strsplit(x, split = ", ")))))
+
+copy_number_sample_ICGC <- fread(Sys.glob("data/processed/copynumber/ICGC_*cnv.tsv"), header =F) %>%
+ separate(V1, into= c("Sample.ID"), extra = "drop", sep = "\\.") %>%
+  mutate(Sample.ID_merge = gsub("-","",gsub("_", "", Sample.ID))) %>%
+  right_join(primary_tumour_ICGC %>%
+               dplyr::select(Sample.ID_merge)) %>%
+  filter(!is.na(Sample.ID)) %>%
+  mutate(Patient.ID = gsub("-", "_",substr(Sample.ID, 1, 8)))
+
+# mutation
+maf_sample <- map_dfr(Sys.glob("data/raw/*/MAF/TCGA_*maf_sample.tsv"),
+                       ~ fread(.x, header = T)) %>%
+  filter(str_detect(`Sample Type`, "Primary Tumor"))
+maf_sample$`Case ID` <- unlist(lapply(maf_sample$`Case ID`, function(x) unique(unlist(strsplit(x, split = ", ")))))
+
+maf_sample_ICGC <- unlist(lapply(Sys.glob("data/raw/20220505_ICGC_OV_meth/MAFs/*.shc.maf.gz"), function(x) gsub("-", "",paste0(unlist(strsplit(x, split = "\\."))[1:2], collapse = "")))) %>%
+  as.data.frame() %>%
+  dplyr::select(Sample.ID_merge = 1) %>%
+  right_join(primary_tumour_ICGC %>%
+               dplyr::select(`Case ID`, Sample.ID_merge))
+
+
+# patient ID list in each assay
+mRNA = c(unlist(mRNA_sample$`Case ID`), unlist(mRNA_sample_ICGC$donorLabel))
+
+cn = c(unlist(copy_number_sample$`Case ID`), unlist(copy_number_sample_ICGC$Patient.ID))
+
+maf = c(unlist(maf_sample$`Case ID`), unlist(maf_sample_ICGC$`Case ID`))
+
+# plot data availability
+data_availability <- Deduplicated_beta %>%
+  filter(Sample_Group == "Primary Tumor") %>%
+  mutate(Patient.ID = substr(Patient.ID, 1, 12)) %>%
+  dplyr::select(Project, Patient.ID) 
+data_availability$Methylation = data_availability$Patient.ID %in% data_availability$Patient.ID
+data_availability$mRNA = data_availability$Patient.ID %in% mRNA
+data_availability$`Copy Number` = data_availability$Patient.ID %in% cn
+data_availability$Mutation = data_availability$Patient.ID %in% maf
+
+data_availability %>%
+  column_to_rownames("Patient.ID") 
+
+
+HRD, SIGNATURE, MOLECULAR SUBTYPE
+```
+
+```{r}
+
+# deduplicate stats
+Deduplicated_beta %>%
+  dplyr::select(Project, Sample_Name, Sample_Group) %>%
+        distinct() %>%
+        group_by(Project, Sample_Group) %>%
+        summarise(`Non-Duplicate Sample`=n()) %>%
+  ungroup() %>%
+  right_join( map_dfr(Sys.glob("data/raw/*/IDAT/*pd.csv"), ~ as.data.frame(fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character"))) %>%
+                             mutate( Sample_Group = gsub("Tumour", "Tumor", Sample_Group))) %>%
+        distinct() %>%
+        group_by(Project, Sample_Group) %>%
+        summarise(`Contain Duplicate`=n()) %>%
+  ungroup()) %>%
+  mutate(`Duplicate Sample` = `Contain Duplicate` -`Non-Duplicate Sample`) %>%
+  filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal")) %>%
+  group_by(Project) %>%
+  filter(sum(`Non-Duplicate Sample`) > 100 | Project == "ICGC_OV") %>%
+  dplyr::select(Project, Sample_Group, `Duplicate Sample`, `Non-Duplicate Sample`)
+
+```
+
+```{r Supplementary 2 demographic }
+
+## load beta file
+beta_sub <- map_dfr(Sys.glob("data/raw/*/IDAT/*pd.csv"), ~ as.data.frame(fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character")))) %>%
+  filter((startsWith(Project, "TCGA")| startsWith(Project, "ICGC"))) %>%
+  dplyr::select(-c("Sample_Plate","Pool_ID", "Sample_Well", "Sentrix_ID","Sentrix_Position"))
+
+Sample_number <- beta_sub %>% 
+  dplyr::select(Project, Sample_Name, Sample_Group) %>%
+        distinct() %>%
+        group_by(Project, Sample_Group) %>%
+        summarise(pre_filer=n()) %>%
+  ungroup()
+
+
+beta_sub %>%
+  filter(Sample_Name %in% beta_deduplicated_list$Sample_Name)%>% 
+  dplyr::select(Project, Sample_Name, Sample_Group) %>%
+        distinct() %>%
+        group_by(Project, Sample_Group) %>%
+        summarise(post_filer=n()) %>%
+  ungroup() %>%
+  left_join(Sample_number)
+
+```

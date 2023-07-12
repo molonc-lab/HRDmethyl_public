@@ -20,6 +20,7 @@ mkdir -p data/processed
 mkdir -p data/output_error
 mkdir -p data/processed/methylation
 mkdir -p data/processed/mRNA
+mkdir -p data/processed/copynumber
 mkdir -p data/processed/VCF
 mkdir -p data/processed/Signatures
 mkdir -p data/processed/Signatures/tables
@@ -41,9 +42,6 @@ dir <- getwd()
 Sys.setenv(dir = dir)
 ```
 
-```{r testing supporting function}
-
-```
 # Methylation preprocessing
 ```{r preprocess methylation sample info}
 # generate essential file for methylation process - TCGA
@@ -148,6 +146,19 @@ bash scripts/4_run_cosmic_signature.sh $dir
 bash scripts/5_run_msisensor.sh
 ```
 
-#HRD score ICGC
-please run 5_HRDscore_ICGC_OV.rmd
+# HRD score ICGC
+please run scripts/6_HRDscore_ICGC_OV.Rmd
 
+# Methylation clustering that is equivalent to Yates et al 
+please run scripts/7_methylation_clustering ICGC_OV.Rmd
+
+# Copy number
+```{bash}
+for i in data/raw/*/copynumber; 
+  do
+    project=${i%%+(_meth/copynumber)};
+    project=${project##*20220401_};
+    echo $project;
+    grep -Er "BRCA1|RAD51C" $i | grep -v "BRCA1P1" |  sed 's/^\.\///g' > data/processed/copynumber/${project}_BRCA1_RAD51C_cnv.tsv;
+  done
+```

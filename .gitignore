@@ -22,6 +22,8 @@ README.txt
 *.MAF
 *.vcf
 *.VCF
+*.cn
+*.qsv
 # pbs output
 *.o*
 *.e*
