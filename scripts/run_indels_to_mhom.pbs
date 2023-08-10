@@ -1,0 +1,33 @@
+#!/bin/bash
+#######################
+#PBS -N indels_to_mhom
+#PBS -l ncpus=1,mem=2gb,walltime=01:00:00
+#PBS -j oe
+#PBS -M lijun.xu@qimrberghofer.edu.au
+#PBS -m ae
+#PBS -W umask=0007
+#PBS -v DIR
+#######################
+
+
+module load R/3.5.1
+
+cd $DIR
+
+INPUT_DIR=$DIR"/data/raw"
+SCRIPT_DIR=$DIR"/scripts"
+
+
+for f in ${INPUT_DIR}/indels/*.shc.vcf.gz ;
+do
+	SAMPLE=`basename $f.shc.vcf.gz`
+	Rscript ${SCRIPT_DIR}/flank_indels.R \
+		-v $f \
+		-o ${INPUT_DIR}/indels/${SAMPLE}.annotated_indels.tsv
+	Rscript ${SCRIPT_DIR}/compute_microhomology_scores.R \
+		-i ${INPUT_DIR}/indels/${SAMPLE}.annotated_indels.tsv \
+		-o ${INPUT_DIR}/microhom/${SAMPLE}.microhomology_results.tsv
+done
+
+
+touch ./data/supporting/indels_to_mhom_job_done.txt

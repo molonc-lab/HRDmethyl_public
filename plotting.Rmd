@@ -17,6 +17,9 @@ library("gridExtra")
 library("readxl")
 library("circlize")
 library("ggbeeswarm")
+library("ggpubr")
+source("scripts/mRNA_edgeR_support.R")
+
 ```
 #function
 ```{r function}
@@ -41,6 +44,7 @@ change_facet_strip_color <- function(ggplot, color_list){
 #palette
 ```{r}
 methylation_color = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "grey")
+methylation_color_ht = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "white")
 methylation_color_brca1 = c("Yes" = "#93a667","No" = alpha("grey", 0.6))
 methylation_color_rad51c = c("Yes" = "#7BB2D9","No" = alpha("grey", 0.6))
 col = list(alt = c("MUT" = "#EE8A8A", "Conseq" = "#616161", "NA" = "white"),
@@ -59,10 +63,9 @@ methylation_lvl <- c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")
 project_lvl <- c("OV", "TGCT", "STAD","LGG","BC", "UCEC", "LIHC", "COAD", "LUSC", "HNSC", "THCA")
 hr_gene_list <- c("BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D")
 ```
-# Supplementary plot
-```{r Supplementary 1 data availability}
-library(eulerr)
-# anntoate ICGC
+
+#load data
+```{r load data}
 primary_tumour_ICGC <- fread("data/raw/20220505_ICGC_OV_meth/icgc_sample_id_mapping.tsv") %>%
                filter(`Sample time point` == "primary") %>%
                mutate(Sample.ID_merge = gsub("_","", paste0(`Case ID`, `Tumour sample ID`))) 
@@ -75,10 +78,21 @@ Deduplicated_beta <- map_dfr(Sys.glob("data/processed/methylation/*deduplicated_
 #mRNA
 mRNA_sample <- map_dfr(Sys.glob("data/raw/*/mRNA/TCGA_*_sample.tsv"),
                        ~ fread(.x, header = T)) %>%
-  filter(`Sample Type` == "Primary Tumor")
+  filter(`Sample Type` == "Primary Tumor")%>%
+  mutate(File.Name = gsub("-", ".",gsub(".rna_seq.augmented_star_gene_counts.tsv", "", `File Name`))) %>%
+  dplyr::select(File.Name, Sample.ID= `Sample ID`, Project = `Project ID`, Sample_Group = `Sample Type`)
+
 mRNA_sample_ICGC <- fread(Sys.glob("data/raw/*/mRNA/ICGC*_sample.csv")) %>%
   filter(SampleType == "Primary tumour") %>%
-  mutate(donorLabel = gsub("-", "_", donorLabel))
+  mutate(File.Name = paste( gsub("-", ".", sampleLabel), gsub("-", ".", donorLabel), sep = "_"),
+         Sample_Group = "Primary Tumor",
+         Sample.ID = paste( gsub("-", "_", donorLabel), gsub("-", "_", sampleLabel), sep = "_"), 
+         Project = "OV") %>%
+  dplyr::select(File.Name, Sample.ID, Project, Sample_Group )
+
+mRNA <- map_dfr(Sys.glob("data/processed/mRNA/*_mRNA_edgeR.csv"), ~as.data.frame(t(data.frame(data.table::fread(.x, header = T, na.string = "", fill = T), row.names = 1))))%>%
+  mutate(File.Name = gsub(".rna_seq.augmented_star_gene_counts.tsv", "", gsub("^X", "", rownames(.))))%>%
+  left_join(rbind(mRNA_sample, mRNA_sample_ICGC) , by = "File.Name")
 
 #copy number 
 copy_number_sample <- map_dfr(Sys.glob("data/raw/*/copynumber/TCGA_*cn_sample.tsv"),
@@ -107,6 +121,348 @@ maf_sample_ICGC <- unlist(lapply(Sys.glob("data/raw/20220505_ICGC_OV_meth/MAFs/*
                dplyr::select(`Case ID`, Sample.ID_merge))
 
 
+#methylated sample list
+meth_list <- fread("data/processed/TCGA_ICGC_methylation_list.tsv") %>%
+  filter(Methylation != "No") %>%
+  mutate(CaseID =if_else(Project =="OV", substr(start = 1,stop = 8, Sample.ID), substr(start = 1,stop = 12, Sample.ID))) %>%
+  dplyr::select(-Sample.ID,- Project)
+
+
+
+#methylation values
+# beta_sub <- map_dfr(Sys.glob("data/processed/methylation/*_beta_subset_promo.csv"), ~ as.data.frame(data.table::fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character")))) %>%
+#   filter(startsWith(Project, "TCGA")| startsWith(Project, "ICGC")) %>%
+#   dplyr::select(-c("Sample_Plate","Pool_ID", "Sample_Well", "Sentrix_ID","Sentrix_Position"))
+# beta_sub <- beta_sub%>%
+#   mutate(Sample_Group = gsub("Tumour", "Tumor", Sample_Group),
+#          Project = gsub("ICGC_|TCGA_", "", Project),
+#          Project = if_else(Project == "BRCA", "BC", Project)) 
+# 
+# beta_sub <- beta_sub %>%
+#   filter(gene %in% c("BRCA1", "BRCA2", "BRIP1", "RAD51C"))
+
+# fwrite(as.data.table(beta_sub, keep.rownames = ""), paste0( "data/processed/methylation/","beta_for_plot.csv"), row.names = F, sep = "\t")
+beta_sub <- fread("data/processed/methylation/beta_for_plot.csv", header = T, na.strings = "", fill = T) %>%
+  dplyr::select(-V1)
+
+beta_sub_meth <- BRCA1_RAD51C_meth_annotat(beta_sub %>%
+                                             distinct())
+beta_sub_meth_t <- beta_sub_meth %>%
+  filter(Sample_Group =="Primary Tumor") %>%
+  pivot_longer(cols=c("BRCA1_M", "RAD51C_M"), values_to = "Methylation", names_to = "gene2") %>%
+  mutate(gene2 = gsub("_M","", gene2)) %>%
+  filter(gene == gene2) %>%
+  dplyr::select(-c("gene2"))%>%
+  dplyr::select(gene, Project, Methylation, Sample.ID) %>%
+  distinct() 
+
+
+```
+## mutation
+```{r}
+oncokb_gene_list <- fread("data/supporting/cancerGeneList_ONCOKB_ver_20230412.tsv")
+gene_list = c("TP53", "PIK3CA", "IDH1", "ARID1A", "PTEN", "NUMA1", "CIC")
+
+
+#TCGA SOMATIC
+mc3 <- as.data.frame(fread("data/raw/mc3.v0.2.8.PUBLIC.maf", showProgres = T))
+mc3 <- mc3 %>%
+  mutate(silent_mutation = if_else(Variant_Classification %in% c("3'Flank", "5'Flank","3'UTR", "5'UTR","RNA", "Intron", "Silent"), "Yes", "No"))
+
+#ICGC SOMATIC
+mutation_icgc <- Sys.glob("/working/genomeinfo/share/analysis/AOCS_-_ICGC_ovarian_cancer_project/MAFs/*shc.maf.gz") %>%
+  map_dfr(~fread(cmd = paste0("gunzip -cq ", .x), skip = "Hugo_Symbol") %>%
+            mutate(Sample.ID =.x) %>%
+            filter(Hugo_Symbol != "unknown") %>%
+  separate(Tumor_Sample_Barcode, into = c("id_1", "id_2"), extra = "drop", sep = ":") %>%
+  mutate(Sample.ID = gsub("-", "_",paste(id_1, id_2, sep = "-")) ))%>%
+  mutate(silent_mutation = if_else((Effect_Ontology %in% 
+                                     c("5_prime_UTR_variant", "3_prime_UTR_variant", "synonymous_variant", "intron_variant", "intergenic_region") |
+                                       Variant_Classification %in% c("3'Flank", "5'Flank")), "Yes", "No"))
+
+#MERGE ICGC & TCGA 
+mc3_icgc <- rbind(mutation_icgc %>%
+                    dplyr::select(Hugo_Symbol, Sample.ID, silent_mutation),
+                  mc3 %>% 
+                    mutate(Sample.ID = substr(Tumor_Sample_Barcode, 1, 15)) %>%
+                    dplyr::select(Hugo_Symbol, Sample.ID, silent_mutation))
+
+#VEP ANNOTATED WITH CLINICAL 
+TP53_CLINVAR <- as.data.frame(fread("data/processed/VCF/variants_hg19.vep102.tsv",skip = 105, header = T, sep = "\t", na.strings = c("-")))
+TP53_CLINVAR <- TP53_CLINVAR[, colSums(is.na(TP53_CLINVAR)) != nrow(TP53_CLINVAR)]
+TP53_CLINVAR <- TP53_CLINVAR %>%
+  filter(SYMBOL %in% gene_list ) %>%
+  dplyr::select(`#Uploaded_variation`, Location, Gene, Consequence,IMPACT, VARIANT_CLASS, SYMBOL, CANONICAL, EXON, HGVSc, HGVSp, ClinVar_CLNREVSTAT, ClinVar_CLNSIG)
+
+TP53_CLINVAR <- TP53_CLINVAR %>%
+  mutate(customised_function_loss = case_when(
+    str_detect(ClinVar_CLNSIG, fixed("benign", ignore_case = T)) ~ "No",
+    ClinVar_CLNREVSTAT %in% c("reviewed_by_expert_panel", "criteria_provided,_single_submitter", "criteria_provided,_multiple_submitters,_no_conflicts") & str_detect(ClinVar_CLNSIG, fixed("pathogenic", ignore_case = T)) ~ "Yes",
+    (as.numeric(unlist(strsplit(EXON, "/"))[1]) < as.numeric(unlist(strsplit(EXON, "/"))[2])) & str_detect(Consequence, "stop_gained|frameshift") ~ "Yes",
+    str_detect(Consequence,"splice_acceptor_variant|splice_donor_variant")  ~ "Yes",
+   TRUE ~ "No")) %>%
+  filter(customised_function_loss == "Yes") %>%
+  distinct() %>%
+  mutate(HGVSc = sapply(str_split(.$HGVSc, ":"), function(x) x[2]),HGVSp = sapply(str_split(.$HGVSp, ":"), function(x) x[2])) 
+
+mc3_gene <- rbind(mc3 %>%
+  dplyr::select(Hugo_Symbol, Tumor_Sample_Barcode, HGVSc, HGVSp, silent_mutation),
+  mutation_icgc %>%
+    dplyr::select(Hugo_Symbol, Tumor_Sample_Barcode= Sample.ID, HGVSc = CDS_Change, HGVSp =Amino_Acid_Change, silent_mutation)) %>%
+  mutate(Sample.ID = if_else(startsWith(Tumor_Sample_Barcode, "AOC"), substr(Tumor_Sample_Barcode, 1, 27), substr(Tumor_Sample_Barcode, 1, 15)))%>%
+  filter(Hugo_Symbol %in% c(gene_list,"TP53", "BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D")) %>%
+  dplyr::select(-Tumor_Sample_Barcode) %>%
+  distinct()
+
+for(gene in  c(gene_list,"TP53", "BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D")){
+  clinical = paste0(gene, "_clinical")
+  mc3_gene <- mc3_gene %>%
+    group_by(Sample.ID)%>%
+    mutate(!!gene := case_when(any(Hugo_Symbol == gene & 
+                   (HGVSc %in% unlist(TP53_CLINVAR[which(TP53_CLINVAR$SYMBOL == gene), "HGVSc"]) |
+                      HGVSp %in% unlist(TP53_CLINVAR[which(TP53_CLINVAR$SYMBOL == gene), "HGVSp"]))) ~ "MUT;Conseq", 
+                   any(Hugo_Symbol == gene & silent_mutation == "No") ~ "MUT",
+                   TRUE ~ ""))
+}
+
+mc3_gene <- mc3_gene %>%
+  ungroup() %>%
+  dplyr::select(-c("Hugo_Symbol","HGVSc", "HGVSp", "silent_mutation")) %>%
+  distinct()
+```
+##Molecular Subtype
+```{r molecular subtype}
+TCGA_subtype_info <- Sys.glob("data/supporting/*tcga_pan_can_atlas_2018_clinical*") %>%
+  map_dfr(~ as.data.frame(fread(.x)))
+cimp_label <-as.data.frame(fread("data/supporting/methylation_cluster_membership_all_TCGA.csv", header= T)) %>%
+  mutate(Sample.ID= substr(id, 1, 15)) %>%
+  dplyr::select(Sample.ID,Cluster)
+  
+cimp_label_icgc <- as.data.frame(fread("data/processed/methylation_clustering/OV_cluster_memb_new.csv")) %>%
+  mutate(cluster = case_when(cluster ==1 ~ "High meth cluster",
+                             cluster ==2 ~ "Low meth cluster")) %>%
+  dplyr::select(Sample_Name = index,Cluster = cluster) %>%
+  inner_join(beta_sub_meth %>%
+              filter(Project == "OV") %>%
+              dplyr::select(Sample_Name, Sample.ID) %>%
+               distinct()) %>%
+  dplyr::select(Sample.ID,Cluster)
+histo_label <- as.data.frame(fread("data/supporting/TCGA_BRCA_histo_annotation.csv" ,header = T, na.strings = "N/A", fill = F))
+colnames(histo_label) <- make.names(colnames(histo_label))
+
+breast_idh <-  TCGA_subtype_info %>%
+  separate(Subtype, into =c("Project", "Molecular_Subtype"), sep = "_", extra = "merge") %>%
+  filter(str_detect(`Cancer Type Detailed`,"Breast")) %>%
+  left_join(histo_label %>% 
+              filter(Tumor.or.Normal == "Tumor") %>%
+              mutate(CLID = substr(CLID, 1,15),
+                     er_pr = case_when(er_status_by_ihc =="Positive" | pr_status_by_ihc =="Positive" ~ "ER/PR+",
+                                       er_status_by_ihc %in% c("Indeterminate", "[Not Evaluated]") | pr_status_by_ihc %in% c("Indeterminate", "[Not Evaluated]") ~ "NA",
+                                    TRUE ~ "ER/PR-"),
+                     HER2.newly.derived = case_when(HER2.newly.derived =="Positive" ~ "HER2+",
+                                                           HER2.newly.derived == "Negative" ~ "HER2-",
+                                                     TRUE ~ "NA"),
+                     Triple.Negative.Status = case_when(Triple.Negative.Status == "Yes" ~"TN",
+                                                        Triple.Negative.Status == "No" &  HER2.newly.derived !="NA" & er_pr != "NA" ~ paste0(er_pr, ";",HER2.newly.derived ),
+                                                        Triple.Negative.Status == "No" & HER2.newly.derived == "NA" & er_pr != "NA" ~
+                                                         "NA",
+                                                        TRUE ~"NA"))%>%
+              dplyr::select(`Sample ID` = CLID, PAM50 = starts_with("PAM"), Triple.Negative.Status)) %>%
+  mutate(Subtype = if_else(!is.na(Triple.Negative.Status), PAM50, Molecular_Subtype),
+         `Cancer Type Detailed` = if_else(`Sample ID` %in% unlist(substr(histo_label$CLID, 1,15)), Triple.Negative.Status, `Cancer Type Detailed`)) %>%
+  dplyr::select(- Triple.Negative.Status,-PAM50, -Molecular_Subtype, -Project, -`Patient ID`) 
+
+
+
+TCGA_subtype_info <- TCGA_subtype_info %>%
+  separate(Subtype, into =c("Project", "Molecular_Subtype"), sep = "_", extra = "merge") %>%
+  mutate(`Cancer Type Detailed` = case_when( startsWith(`Cancer Type Detailed`, "Signet Ring Cell") ~"Signet Ring Cell",
+                                            `Cancer Type Detailed` == "Stomach Adenocarcinoma" ~"NOS",
+                                            str_detect(`Cancer Type Detailed`,"NOS")~ "NOS",
+                                            str_detect(`Cancer Type Detailed`,"Stomach")~ gsub("Stomach Adenocarcinoma", "", `Cancer Type Detailed`),
+                                            `Cancer Type Detailed` == "Invasive Breast Carcinoma" ~"NOS",
+                                            str_detect(`Cancer Type Detailed`,"Breast")~ gsub("Carcinoma", "", gsub("Breast Invasive", "", `Cancer Type Detailed`)),
+                                            TRUE ~`Cancer Type Detailed`),
+        Molecular_Subtype = case_when(Project == "LGG" & Molecular_Subtype == "IDHmut-non-codel" ~ "IDHmut non-codel",
+                                      Project == "LGG" & Molecular_Subtype == "IDHmut-codel" ~ "IDHmut codel",
+                                      Project == "UCEC" ~ gsub("_", " ",Molecular_Subtype),
+                                      TRUE ~ Molecular_Subtype))%>%
+  left_join(histo_label %>% 
+              filter(Tumor.or.Normal == "Tumor") %>%
+              mutate(CLID = substr(CLID, 1,15))%>%
+              dplyr::select(`Sample ID` = CLID, PAM50 = starts_with("PAM"))) %>%
+  mutate(Subtype = if_else( str_detect(`Cancer Type Detailed`,"Breast"), PAM50, Molecular_Subtype))%>%
+  dplyr::select(-PAM50, -Molecular_Subtype, -Project, -`Patient ID`) %>%
+  dplyr::rename(Sample.ID = `Sample ID`, MSI_Score = `MSIsensor Score`, Aneuploidy_Score = `Aneuploidy Score`, TMB_nonsilent = `TMB (nonsynonymous)`) 
+
+
+TCGA_subtype <- beta_sub_meth_t %>%
+  mutate(Methylation= if_else(Methylation == "No", Methylation, gene)) %>%
+  dplyr::select(-gene) %>%
+  distinct() %>%
+  group_by(Project, Sample.ID) %>%
+  mutate(methylation_coexit = sum(Methylation != "No")) %>%
+  mutate(Methylation = if_else(methylation_coexit >1 , "BRCA1 & RAD51C", Methylation)) %>%
+  distinct() %>%
+  filter((methylation_coexit != 1) |(methylation_coexit ==1 & Methylation != "No")) %>%
+  ungroup() %>%
+  dplyr::select(-methylation_coexit) %>%
+  filter(Project %in% c("OV","BC", "STAD", "LGG", "TGCT", "UCEC")) %>%
+  mutate(Sample.ID = if_else(startsWith(Sample.ID, "AOC"), Sample.ID, substr(Sample.ID, 1, 15))) %>%
+  left_join(rbind(cimp_label, cimp_label_icgc)) %>%
+  mutate(cimp_label = case_when(Cluster == "High meth cluster" ~ "CIMP+",
+                                Cluster == "Intermediate meth cluster" ~ "CIMPi",
+                                Cluster == "Low meth cluster" ~ "CIMP-")) %>%
+  mutate(Sample.ID_original = Sample.ID) %>%
+  mutate(Sample.ID = if_else(Project =="OV", substr(Sample.ID, 1, 27), Sample.ID)) %>% 
+  left_join(mc3_gene %>%
+              ungroup() %>%
+              distinct() %>%
+              mutate(Sample.ID = if_else(startsWith(Sample.ID, "AOC"), substr(Sample.ID, 1, 27), Sample.ID))) %>%
+  distinct() %>%
+  left_join(TCGA_subtype_info)
+
+
+
+```
+##HRD score
+```{r HRD_score}
+DDR_score <-as.data.frame(fread("data/supporting/ddr_scores/DDRscores.tsv", header= F, na.strings = "NaN", fill = T))
+DDR_score_colname <- unlist(fread("data/supporting/ddr_scores/Scores.tsv", header = F))
+DDR_score_rowname <- fread("data/supporting/ddr_scores/Samples.tsv", header = F)
+colnames(DDR_score) <- DDR_score_colname
+DDR_score$Sample.ID_short<- DDR_score_rowname$V1
+
+ov_hrd <- as.data.frame(fread("data/processed/hrd_icgc/ICGC_OV_WGS_HRD_score.tsv")) %>%
+  pivot_wider(names_from = HRD_components, values_from = HRD_values) %>%
+  mutate(ICGC_ID = gsub("-", "_", ICGC_ID),
+         Sample_ID = gsub("-", "_", Sample_ID)) %>%
+  mutate(Sample.ID = paste(ICGC_ID, Sample_ID, sep = "_"))
+ov_hrd_array <- as.data.frame((fread("data/processed/hrd_icgc/ICGC_OV_HRD_array_score.tsv")))%>%
+  pivot_wider(names_from = HRD_components, values_from = HRD_values) %>%
+  mutate(ICGC_ID = gsub("-", "_", ICGC_ID),
+         Sample_ID = gsub("-", "_", Sample_ID)) %>%
+  mutate(Sample.ID = paste(ICGC_ID, Sample_ID, sep = "_"))
+
+hrd_score <- beta_sub_meth_t %>%
+  mutate(Methylation= if_else(Methylation == "No", Methylation, gene)) %>%
+  distinct() %>%
+  group_by(Project, Sample.ID) %>%
+  mutate(methylation_coexit = sum(Methylation != "No")) %>%
+  mutate(Methylation = if_else(methylation_coexit >1 , "BRCA1 & RAD51C", Methylation))%>%
+  distinct() %>%
+  filter((methylation_coexit != 1) |(methylation_coexit ==1 & Methylation != "No") ) %>%
+  dplyr::select(-methylation_coexit, -gene) %>%
+  mutate(Sample.ID_short = substr(Sample.ID,1,15)) %>%
+  left_join(DDR_score %>%
+              dplyr::select(HRD_Score, starts_with("HRD"), Sample.ID_short)) %>%
+  left_join(ov_hrd %>%
+              dplyr::select(-c("ICGC_ID", "Sample_ID")), by = "Sample.ID" ) %>%
+  mutate(HRD_TAI = if_else(Project == "OV", TAI, HRD_TAI),
+         HRD_LOH = if_else(Project == "OV", LOH, HRD_LOH),
+         HRD_LST = if_else(Project == "OV", LST, HRD_LST),
+         HRD_Score = if_else(Project == "OV", `HRD-sum`, HRD_Score)) %>%
+  dplyr::select(-c("TAI", "LOH", "LST", "HRD-sum")) %>%
+  left_join(ov_hrd_array %>%
+              dplyr::select(-c("ICGC_ID", "Sample_ID")), by = "Sample.ID" ) %>%
+  mutate(HRD_TAI = if_else(Project == "ICGC_OV" & is.na(HRD_TAI), TAI, HRD_TAI),
+         HRD_LOH = if_else(Project == "ICGC_OV" & is.na(HRD_LOH), LOH, HRD_LOH),
+         HRD_LST = if_else(Project == "ICGC_OV" & is.na(HRD_LST), LST, HRD_LST),
+         HRD_Score = if_else(Project == "ICGC_OV"& is.na(HRD_Score), `HRD-sum`, HRD_Score))%>%
+  dplyr::select(-c("TAI", "LOH", "LST", "HRD-sum")) 
+  
+```
+##Signature
+```{r}
+sig_colours_cosmicv2 <- c( "#943503","#8d69a3",
+                          "#7a5093", "#541e75","#420666",
+                          "#360678","#fa939e",
+                          "#f97886",
+                          "#118866",
+                          "#a0c41c","#809c16",
+                          "#85c1e9","#3498db","#009999",
+                          "#7c94ac", "#7c94ac",
+                          "#6a85a0","#577694","#577694",
+                          "#8d958f")
+
+tcga_sig <- fread("data/processed/Signatures/tables/default_cosmicv2_sig_tcga.tsv")
+icgc_sig <- fread("data/processed/Signatures/tables/default_cosmicv2_sig_icgc.tsv")
+
+
+tcga_sig <- tcga_sig %>%
+  mutate(Sample.ID = substr(Sample, 1, 15)) %>%
+  group_by(Sample.ID) %>%
+  filter(n() ==1 | (n()>1 & endsWith(Sample, "01A"))) %>%
+  ungroup()  %>%
+  dplyr::select(-Sample.ID)
+
+sig <- tcga_sig %>%
+  bind_rows(icgc_sig)
+
+sig[is.na(sig)] <- 0
+
+hrd_score_tcga <- hrd_score %>%
+  filter(Project != "OV") %>%
+  dplyr::select(Project, Methylation ,Sample.ID, HRD_Score) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1, 15)) %>%
+  left_join(tcga_sig %>% 
+              mutate(Sample.ID = substr(Sample, 1, 15)) %>%
+              dplyr::select(-"Sample")) %>%
+  distinct()
+
+hrd_score_icgc <- hrd_score %>%
+  filter(Project == "OV") %>%
+  dplyr::select(Project, Methylation,Sample.ID , HRD_Score)%>%
+  left_join(sig %>% dplyr::rename(Sample.ID =Sample )) %>%
+  distinct()
+  
+  
+hrd_predictors <- rbind(hrd_score_tcga, hrd_score_icgc)
+```
+##ICGC msi and tmb
+```{r}
+# icgc_tmb <- Sys.glob("/working/genomeinfo/share/analysis/AOCS_-_ICGC_ovarian_cancer_project/MAFs/*shc.maf.gz") %>%
+#   map_dfr(~fread(cmd = paste0("gunzip -cq ", .x), skip = "Hugo_Symbol") %>%
+#             mutate(Sample.ID =.x) %>%
+#   separate(Tumor_Sample_Barcode, into = c("id_1", "id_2"), extra = "drop", sep = ":") %>%
+#   mutate(Sample.ID = gsub("-", "_",paste(id_1, id_2, sep = "-")) ))%>%
+#   filter((!Effect_Ontology %in% c("5_prime_UTR_variant", "3_prime_UTR_variant", "synonymous_variant", "intron_variant", "intergenic_region") & (! Variant_Classification %in% c("3'Flank", "5'Flank")))) %>%
+#   group_by(id_1, id_2) %>%
+#   summarise(n=n())
+
+# icgc_tmb <- icgc_tmb %>%
+#   mutate(TMB = n/30)
+# 
+# write.csv(icgc_tmb, "data/processed/tmb_icgc.csv",quote = F, row.names = F)
+
+icgc_tmb <- fread("data/processed/tmb_icgc.csv")
+icgc_msi <- Sys.glob("data/processed/msi_icgc/AOCS-[0-9]*") %>%
+  map_dfr(~ as.data.frame(fread(.x) )%>%
+            mutate(Sample.ID = basename(.x))) %>%
+  dplyr::select(Sample.ID, icgc_MSI_Score = `%`)
+
+
+mutation_burden <- TCGA_subtype %>%
+ left_join(icgc_tmb %>%
+             ungroup() %>%
+             mutate(Sample.ID = substr(gsub("-", "_", paste(id_1, id_2, sep = "-")), 1,27)) %>%
+             dplyr::select(Sample.ID, tmb_icgc = TMB)) %>%
+  left_join(icgc_msi %>%
+             mutate(Sample.ID = substr(gsub("-", "_",Sample.ID), 1,27)) ) %>%
+  mutate(TMB_nonsilent = if_else(Project =="OV", as.character(tmb_icgc), as.character(TMB_nonsilent)),
+         MSI_Score = if_else(Project =="OV", as.character(icgc_MSI_Score),  as.character(MSI_Score)),
+         Aneuploidy_Score = as.character(Aneuploidy_Score)) %>%
+  dplyr::select(-tmb_icgc, -icgc_MSI_Score) %>%
+  pivot_longer(cols = c(MSI_Score, Aneuploidy_Score, TMB_nonsilent), values_to = "value", names_to = "parameter_name") %>%
+  mutate(value = as.numeric(value))
+
+
+  
+```
+#Supplementary table 
+```{r sample avilability for each assay}
+
+
 # patient ID list in each assay
 mRNA = c(unlist(mRNA_sample$`Case ID`), unlist(mRNA_sample_ICGC$donorLabel))
 
@@ -127,34 +483,23 @@ data_availability$Mutation = data_availability$Patient.ID %in% maf
 data_availability %>%
   column_to_rownames("Patient.ID") 
 
-
-HRD, SIGNATURE, MOLECULAR SUBTYPE
 ```
-
+#Supplementary Table(?) Fisher's
 ```{r}
-
-# deduplicate stats
-Deduplicated_beta %>%
-  dplyr::select(Project, Sample_Name, Sample_Group) %>%
-        distinct() %>%
-        group_by(Project, Sample_Group) %>%
-        summarise(`Non-Duplicate Sample`=n()) %>%
+TCGA_subtype %>%
+  filter(Project == "BC", !is.na(Subtype)) %>%
+  group_by(Methylation, Subtype) %>%
+  summarise(n=n()) %>%
   ungroup() %>%
-  right_join( map_dfr(Sys.glob("data/raw/*/IDAT/*pd.csv"), ~ as.data.frame(fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character"))) %>%
-                             mutate( Sample_Group = gsub("Tumour", "Tumor", Sample_Group))) %>%
-        distinct() %>%
-        group_by(Project, Sample_Group) %>%
-        summarise(`Contain Duplicate`=n()) %>%
-  ungroup()) %>%
-  mutate(`Duplicate Sample` = `Contain Duplicate` -`Non-Duplicate Sample`) %>%
-  filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal")) %>%
-  group_by(Project) %>%
-  filter(sum(`Non-Duplicate Sample`) > 100 | Project == "ICGC_OV") %>%
-  dplyr::select(Project, Sample_Group, `Duplicate Sample`, `Non-Duplicate Sample`)
-
+  mutate(Methylation = factor(Methylation , levels = c("BRCA1", "RAD51C", "No"))) %>%
+  complete(Methylation, Subtype,
+           fill = list(n = 0))%>%
+  ungroup() %>%
+  fisher.test(x = t(matrix(.$n,byrow = T, nrow = 3)), simulate.p.value=TRUE) 
 ```
 
-```{r Supplementary 2 demographic }
+#Supplementary plot 1- demographic
+```{r Supplementary 1 demographic }
 
 ## load beta file
 beta_sub <- map_dfr(Sys.glob("data/raw/*/IDAT/*pd.csv"), ~ as.data.frame(fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character")))) %>%
@@ -168,14 +513,1214 @@ Sample_number <- beta_sub %>%
         summarise(pre_filer=n()) %>%
   ungroup()
 
-
-beta_sub %>%
-  filter(Sample_Name %in% beta_deduplicated_list$Sample_Name)%>% 
-  dplyr::select(Project, Sample_Name, Sample_Group) %>%
+Deduplicated_beta %>%
+  filter(Sample_Group %in% c("Primary Tumor"), Sample_Name %in% Deduplicated_beta$Sample_Name) %>%
+  dplyr::select(Project, Sample_Name, Sample_Group, Sample.ID) %>%
         distinct() %>%
-        group_by(Project, Sample_Group) %>%
-        summarise(post_filer=n()) %>%
+   mutate( Sample_Group = gsub("Tumour", "Tumor", Sample_Group),
+           CaseID = if_else(Project =="ICGC_OV", substr(start = 1,stop = 8, Sample.ID), substr(start = 1,stop = 12, Sample.ID) )) %>%
+  left_join( rbind(map_dfr(Sys.glob("data/raw/*/*clinical.tsv"), ~ as.data.frame(fread(.x, header = T, na.strings = "'--", fill = T,  colClasses = "character"))) %>%
+               mutate(age = as.numeric(age_at_index)) %>%
+                dplyr::select(stage = ajcc_pathologic_stage, gender, race, age, CaseID=case_submitter_id),
+ fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/Patch_2015_ICGC_donor.tsv") %>%
+  mutate(CaseID = gsub("-", "_", submitted_donor_id,),
+         race = "not reported",
+         stage = paste("Stage", donor_tumour_stage_at_diagnosis, sep = " ")) %>%
+  dplyr::select(stage, gender= donor_sex, race, age = donor_age_at_diagnosis, CaseID)), by = "CaseID")%>%
+  mutate(race = if_else(Project == "ICGC_OV", "not reported", race),
+         stage = if_else(is.na(stage), "not reported", stage)) %>%
+    distinct()-> demograph_table
+
+#Supplementary Figure 1a total age
+demograph_table<- demograph_table %>%
+  mutate(Project = gsub("ICGC_|TCGA_", "", Project),
+         Project = if_else(Project == "BRCA", "BC", Project),
+         sex = case_when(is.na(gender) & Project == "TCGA_TGCT" ~"M",
+                            is.na(gender) ~ "not reported",
+                            gender == "female" ~ "F",
+                            gender == "male" ~ "M")) %>%
+  dplyr::rename(Dataset = Project)
+
+demograph_table_sex <- demograph_table %>%
+  group_by(Dataset, sex) %>%
+  summarise(n=n())
+pdf("plots/Supplementary/Supplementary1_age.pdf", height = 7, width = 10)
+demograph_table %>%
+  mutate(AgeDecade = as.factor(floor(age/10)* 10),
+         sex = case_when(sex == "not reported" & Dataset == "TGCT" ~ "M",
+                            sex== "not reported" ~ "NA", 
+                            TRUE ~ sex)) %>%
+  group_by(Dataset, sex, AgeDecade) %>%
+  dplyr::summarise(N=n(), .groups="drop") %>% 
+        # A more transparent way of managing the transformation to get "Females to the left".
+        mutate(PlotN=ifelse(sex=="F", -N, N))  %>%
+  ggplot(aes(x = AgeDecade, fill = sex, y=PlotN))+
+  geom_col()+
+  coord_flip()+
+  facet_wrap(~Dataset,scale = "free_x", ncol = 6 )+
+  scale_y_continuous(labels = abs)+
+  theme_bw()+
+  xlab("Age at Diagnosis")+
+  ylab("Number of Patients")+
+  scale_fill_manual(values = c("F" = "#D55E00","M" = "#0072B2", "NA" = "#999999"))+
+  theme(legend.position = "bottom")
+dev.off()
+
+#Supplementary Figure 1b total stage
+pdf("plots/Supplementary/Supplementary1_stage.pdf", height = 7.5, width = 10)
+demograph_table %>%
+  mutate(stage = gsub("Stage ", "", stage),
+         stage = if_else(stage %in% c("not reported", "Not Reported"), "NA", stage),
+         sex = case_when(sex == "not reported" & Dataset == "TGCT" ~ "M",
+                            sex == "not reported" ~ "NA", 
+                            TRUE ~ sex)) %>%
+  group_by(Dataset, sex, stage) %>%
+  dplyr::summarise(N=n(), .groups="drop") %>% 
+        # A more transparent way of managing the transformation to get "Females to the left".
+        mutate(PlotN=ifelse(sex=="F", -N, N))  %>%
+  ggplot(aes(x = stage, fill = sex, y=PlotN))+
+  geom_col()+
+  coord_flip()+
+  facet_wrap(~Dataset,scale = "free", ncol = 6 )+
+  scale_y_continuous(labels = abs)+
+  theme_bw()+
+  xlab("Stage at Diagnosis")+
+  ylab("Number of Patients")+
+  scale_fill_manual(values = c("F" = "#D55E00","M" = "#0072B2", "NA" = "#999999"))+
+  theme(legend.position = "bottom")
+dev.off()
+```
+#Supplementary plot 2- HR gene promoter
+```{r}
+pdf("plots/Supplementary/Sup2_promoter_methylation_level.pdf",width = 10, height = 12)
+beta_sub %>%
+  filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal"), !is.na(gene_promo_200)) %>%
+  mutate(Project = if_else(Project %in% c("GBM", "LGG"),"GBM / LGG",Project) )%>%
+  group_by(Project) %>%
+  
+  group_by(gene_promo_200, Sample_Name, Sample_Group, Project) %>%
+  summarise(avg_meth_level = mean(beta)) %>%
+  dplyr::rename(`Sample Type` = Sample_Group) %>%
+  ggplot(aes(y = avg_meth_level, x= Project, color = `Sample Type`))+
+  geom_violin(scale = "width")+
+  facet_wrap(~ gene_promo_200, ncol = 1,strip.position = "right")+
+  ylab("Average Methylation Level at Promoter(+-200bps)")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust =1), legend.position = "bottom")+
+  scale_y_continuous(labels= scales::percent,limits = c(0,1))
+dev.off()
+
+```
+
+#Supplementary plot 3 - heatmap threshold verfication
+```{r}
+beta_sub_ht <- beta_sub %>%
+  filter(gene_promo_200 %in% c("BRCA1", "RAD51C"), Sample_Group == "Primary Tumor", Sample_Name %in% Deduplicated_beta$Sample_Name) %>%
+  mutate(CaseID = if_else(Project =="OV", substr(start = 1,stop = 8, Sample.ID), substr(start = 1,stop = 12, Sample.ID))) %>%
+  left_join(meth_list, by = c("CaseID","gene")) %>%
+  mutate(Methylation = if_else(is.na(Methylation), "No", Methylation)) 
+
+ht_row_meth <- meth_list %>%
+  dplyr::select(-Methylation) %>%
+  group_by(CaseID) %>%
+  summarise(Methylation = paste(gene, collapse = " & ")) %>%
   ungroup() %>%
-  left_join(Sample_number)
+  right_join(beta_sub_ht %>%
+               dplyr::select(CaseID) %>%
+               distinct()) %>%
+  mutate(Methylation = if_else(is.na(Methylation), "No", Methylation)) %>%
+  column_to_rownames("CaseID")
+
+ht_start_cg <- beta_sub_ht %>%
+  dplyr::select(CpG,gene,chr_start) %>%
+  distinct() %>%
+  column_to_rownames("chr_start")
+
+
+
+htmap_list <- beta_sub_ht %>%
+  dplyr::select(CaseID, chr_start, beta, Project) %>%
+  distinct()%>%
+  filter(Project %in% c("OV", "TGCT", "STAD", "BC", "LGG", "SKCM", "GBM", "UCEC", "COAD", "LUSC")) %>%
+   split(list(.$Project)) %>%
+  map( ~ pivot_wider(.x, names_from = chr_start, values_from = beta) %>%
+         select_if(~ !any(is.na(.))) %>%
+         dplyr::select( -Project) %>%
+         column_to_rownames(var = "CaseID") %>%
+         `colnames<-`(unlist(ht_start_cg[colnames(.), "CpG"])) %>%
+         as.matrix() %>%
+         Heatmap(. , col =colorRamp2(seq(0, 1, length =3), c("blue", "white", "red")),
+                 show_row_names = F,  cluster_columns = F, 
+                 show_heatmap_legend = F, 
+                 column_title = unique(.x$gene_promo_200), 
+                 column_names_gp = gpar(fontsize = 5),
+                 clustering_distance_rows = "pearson", 
+                 column_title_gp = gpar(fontsize = 7), 
+                 column_split = ht_start_cg[which(ht_start_cg$CpG ==colnames(.)), "gene"], 
+                 right_annotation = rowAnnotation(Methylated = ht_row_meth[rownames(.),"Methylation"], 
+                                                  col = list(Methylated = methylation_color_ht)),
+                  top_annotation = HeatmapAnnotation(Gene = anno_block(gp = gpar(fill = c(methylation_color_ht["BRCA1"],methylation_color_ht["RAD51C"])),
+                                                                      labels = c("BRCA1", "RAD51C"),
+                                                                      labels_gp = gpar(col = "black", fontsize = 10)))))
+
+
+pdf("plots/Supplementary/Sup3_heatmap_methylation.pdf")
+# grid.newpage()
+# pushViewport(viewport(layout = grid.layout(nr = 10, nc = 4, heights = unit(rep(c(18),5), "null"), widths = unit(c(0.5,5,0.5,5),"null" ))))
+# for (x in 1:length(htmap_list)){
+#   grid.text(names(htmap_list)[x], vp = viewport(layout.pos.row = if_else(x%%2==0, x-1, x), layout.pos.col = if_else(x%%2==0, 3, 1)))
+#   pushViewport(viewport(layout.pos.row = if_else(x%%2==0, x-1, x), layout.pos.col = if_else(x%%2==0, 4, 2)))
+#   draw(htmap_list[[x]], newpage = FALSE)
+#   upViewport()
+# }
+for (x in 1:length(htmap_list)){
+  grid.newpage()
+  pushViewport(viewport(layout = grid.layout(nr = 2, nc = 1, heights = unit(c(0.5, 5), "null"))))
+  grid.text(names(htmap_list)[x], vp = viewport(layout.pos.row = 1, layout.pos.col = 1))
+  pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
+  draw(htmap_list[[x]], newpage = FALSE)
+  upViewport()
+}
+dev.off()
+
+
+```
+
+#Supplementary plot 4- demographic methylation
+```{r}
+#subset demographic summary for methylated sample
+demograph_table %>%
+  right_join(meth_list) -> demograph_table_meth
+write.csv(demograph_table_meth, "demograph_table_meth.csv", quote = F, row.names = F)
+
+demograph_table_meth<- demograph_table_meth %>%
+  mutate(Project = gsub("ICGC_|TCGA_", "", Project),
+         Project = if_else(Project == "BRCA", "BC", Project),
+         sex = case_when(is.na(gender) & Project == "TGCT" ~"M",
+                            is.na(gender) ~ "not reported",
+                            gender == "female" ~ "F",
+                            gender == "male" ~ "M")) %>%
+  dplyr::select(-gender) %>%
+  dplyr::rename(Dataset = Project) %>%
+  filter(!is.na(Dataset)) %>%
+  group_by(CaseID) %>%
+  mutate(Methylation = paste(gene, collapse = "&")) %>%
+  dplyr::select(-gene) %>%
+  distinct() %>%
+  ungroup()
+
+pdf("plots/Supplementary/Sup4_stage.pdf", width =14, height = 6)
+demograph_table_meth %>%
+  mutate(Dataset = factor(Dataset, levels = c("OV","TGCT", "STAD", "LGG", "BC", "SKCM", "UCEC", "GBM","LIHC","COAD", "HNSC","LUSC","THCA","PAAD","ESCA","CESC","KIRC", "BLCA","LUAD")),
+         stage = gsub("Stage ", "", stage),
+         stage = if_else(stage == "not reported", "NA", stage)) %>%
+  group_by(Dataset, Methylation, stage) %>%
+  summarise(n=n()) %>%
+  ggplot(aes(fill = Methylation, x = stage, y =n))+
+  geom_bar(stat="identity")+
+  facet_wrap(~Dataset, scale = "free", ncol = 8)+
+  theme_bw()+
+  xlab("Stage at Diagnosis")+
+  ylab("Number of Patients")+
+  scale_fill_manual(values = methylation_color, "Methylated Gene")+
+  theme(legend.position = "bottom")+
+   scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1)))))
+dev.off()
+
+
+pdf("plots/Supplementary/Sup4_age.pdf", width =14, height = 6)
+demograph_table_meth %>%
+  mutate(Dataset = factor(Dataset, levels = c("OV","TGCT", "STAD", "LGG", "BC", "SKCM", "UCEC", "GBM","LIHC","COAD", "HNSC","LUSC","THCA","PAAD","ESCA","CESC","KIRC", "BLCA","LUAD")),
+         stage = gsub("Stage ", "", stage),
+         stage = if_else(stage == "not reported", "NA", stage)) %>%
+  ggplot(aes(fill = Methylation, x = age))+
+  geom_histogram(binwidth=15)+
+  facet_wrap(~Dataset, scale = "free", ncol = 8)+
+  theme_bw()+
+  xlab("Age at Diagnosis")+
+  ylab("Number of Patients")+
+  scale_fill_manual(values = methylation_color, "Methylated Gene")+
+  theme(legend.position = "bottom")+
+   scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1)))))
+dev.off()
+```
+#Supplementary plot 5 BRCA2 and BRIP1
+```{r}
+library(ggnewscale)
+BRCA2_meth <- beta_sub %>%
+  filter(gene == "BRCA2", Project %in% c("BC"), Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal")) %>%
+    mutate(CpG = factor(CpG, levels = unique(beta_sub$CpG[order(beta_sub$chr_start)])), gene2=gene) %>%
+  ggplot(aes(x = CpG, y = beta, group = Sample_Name, colour = Sample_Name)) +
+                geom_point(alpha = 0.7) +
+                geom_line(alpha = 0.3) +
+                facet_grid(rows = vars(Sample_Group), cols = vars(Project), switch = "y", space = "free") +
+                theme_bw()+
+                theme(axis.text.x = element_text(angle = 90, vjust = 0.5), legend.position = "bottom") +
+                guides(colour = "none") +
+                scale_y_continuous(breaks=c(0,0.25,0.5,0.75,1.0), expand=c(0,0), position = "right") +
+                geom_tile(aes(x= CpG, y = -0.05, fill = gene_promo_200, height = 0.05), color = NA) +
+                scale_fill_brewer("Promoter +- 200bps", palette = "PRGn",  guide = guide_legend(order = 1))+
+                new_scale_fill() +
+                geom_tile(aes(x= CpG, y = -0.12, fill = CpG_context, height = 0.05), color = NA) +
+                scale_fill_brewer("CpG context", palette = "Greens",  guide = guide_legend(order = 2),  direction=-1)+
+                new_scale_fill() +
+               
+                geom_tile(aes(x= CpG, y = -0.26, fill = PredefinedCpG, height = 0.05), color = NA) +
+                scale_fill_brewer("CpG selected", palette = "PiYG",  guide = guide_legend(order = 4))
+
+BRIP1_meth <- beta_sub %>%
+  filter(gene == "BRIP1", Project %in% c("CESC", "LIHC", "UCEC"), Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal"), !is.na(beta)) %>%
+    mutate(CpG = factor(CpG, levels = unique(beta_sub$CpG[order(beta_sub$chr_start)])), gene2=gene) %>%
+  ggplot(aes(x = CpG, y = beta, group = Sample_Name, colour = Sample_Name)) +
+                geom_point(alpha = 0.7) +
+                geom_line(alpha = 0.3) +
+                facet_grid(rows = vars(Sample_Group), cols = vars(Project), switch = "y", space = "free") +
+                theme_bw()+
+                theme(axis.text.x = element_text(angle = 90, vjust = 0.5), legend.position = "bottom") +
+                guides(colour = "none") +
+                scale_y_continuous(breaks=c(0,0.25,0.5,0.75,1.0), expand=c(0,0), position = "right") +
+                geom_tile(aes(x= CpG, y = -0.05, fill = gene_promo_200, height = 0.05), color = NA) +
+                scale_fill_brewer("Promoter +- 200bps", palette = "PRGn",  guide = guide_legend(order = 1))+
+                new_scale_fill() +
+                geom_tile(aes(x= CpG, y = -0.12, fill = CpG_context, height = 0.05), color = NA) +
+                scale_fill_brewer("CpG context", palette = "Greens",  guide = guide_legend(order = 2),  direction=-1)+
+                new_scale_fill() +
+                
+                geom_tile(aes(x= CpG, y = -0.26, fill = PredefinedCpG, height = 0.05), color = NA) +
+                scale_fill_brewer("CpG selected", palette = "PiYG",  guide = guide_legend(order = 4))
+
+ggsave(plot = BRCA2_meth,filename = "plots/Supplementary/Sup5__BRCA2me.pdf", height = 297/3, width = 200, units = "mm")
+ggsave(plot = BRIP1_meth,filename = "plots/Supplementary/Sup5_BRIP1me.pdf", height = 297/3, width = 200, units = "mm")
+
+#plot mRNA
+BRCA2_sample <- beta_sub %>%
+  filter(gene_promo_200 == "BRCA2") %>%
+  group_by(Sample.ID) %>%
+  summarise(avg_meth = mean(beta)) %>%
+  filter(avg_meth > 0.4) %>%
+  pull(Sample.ID)
+BRCA2_mRNA <- mRNA %>%
+  filter(Project %in% c("TCGA-BRCA"), Sample_Group == "Primary Tumor") %>%
+  dplyr::select(mRNA_norm_counts = ENSG00000139618.16, Sample.ID) %>%
+  mutate(Project = "BC",
+         gene = "BRCA2",
+         Methylation = if_else(Sample.ID %in% BRCA2_sample, "Yes", "No"),
+          Methylation = factor(Methylation, levels = c("Yes", "No"))) %>%
+  ggplot(aes(x = Project, y = mRNA_norm_counts, color = Methylation))+
+   geom_point(position = position_jitterdodge(dodge.width = 1.2,jitter.width = 0.35), size = 0.9) +
+  geom_boxplot(data = . %>% filter(Methylation == "No"),position = position_nudge(x = 0.3),outlier.shape = NA, width = 0.3, color = "black", fill = NA)+
+  geom_boxplot(data = . %>% group_by(Project, Methylation) %>% filter(Methylation != "No", n()>2)%>% ungroup(),position = position_nudge(x = -0.3),outlier.shape = NA, width = 0.3)+
+  ylab("log2 ( CPM )") +
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),axis.ticks.x = element_blank(),
+        legend.key.size = unit(0.5, 'cm'),legend.position = "bottom", 
+        plot.margin = margin(0.8, 0.2, 0.2, 0.2, "cm"),
+        panel.grid.major.x = element_blank())+
+  facet_grid( cols = vars(Project), rows = vars(gene), space = "free", switch = "y", scale = "free_x", margins = F)+
+  scale_color_manual(values = c("No" = "grey", "Yes" = "orange"))+
+  scale_y_continuous(position = "right")
+
+# load cesc mRNA for plotting
+mRNA_CESC <- map_dfr(Sys.glob("data/side_project/TCGA_CESC_mRNA_edgeR.csv"), ~as.data.frame(t(data.frame(data.table::fread(.x, header = T, na.string = "", fill = T), row.names = 1))))%>%
+  mutate(File.Name = gsub(".rna_seq.augmented_star_gene_counts.tsv", "", gsub("^X", "", rownames(.))))%>%
+  left_join(mRNA_sample %>%
+               mutate(File.Name = gsub("-", ".",gsub(".rna_seq.augmented_star_gene_counts.tsv", "", `File Name`))) %>%
+             dplyr::select(File.Name, Sample.ID= `Sample ID`, Project = `Project ID`, Sample_Group = `Sample Type`) , by = "File.Name")
+
+
+BRIP1_sample <- beta_sub %>%
+  filter(gene_promo_200 == "BRIP1") %>%
+  group_by(Sample.ID) %>%
+  summarise(avg_meth = mean(beta)) %>%
+  filter(avg_meth > 0.4) %>%
+  pull(Sample.ID)
+
+BRIP1_mRNA <- rbind(mRNA%>%
+  filter(Project %in% c("TCGA-CESC", "TCGA-LIHC", "TCGA-UCEC"), Sample_Group == "Primary Tumor") %>%
+  dplyr::select(mRNA_norm_counts = ENSG00000136492.9, Sample.ID, Project),
+  mRNA_CESC %>%
+  filter(Sample_Group == "Primary Tumor") %>%
+  dplyr::select(mRNA_norm_counts = ENSG00000136492.9, Sample.ID, Project)) %>%
+  mutate(Project = gsub("TCGA-", "", Project),
+         gene = "BRIP1",
+         Methylation = if_else(Sample.ID %in% BRIP1_sample, "Yes", "No"),
+          Methylation = factor(Methylation, levels = c("Yes", "No"))) %>%
+  ggplot(aes(x = Methylation, y = mRNA_norm_counts, color = Methylation))+
+   geom_point(position = position_jitterdodge(dodge.width = 1.2,jitter.width = 0.35), size = 0.9) +
+  geom_boxplot(data = . %>% filter(Methylation == "No"),outlier.shape = NA, width = 0.3, color = "black", fill = NA)+
+  geom_boxplot(data = . %>% group_by(Project, Methylation) %>% filter(Methylation != "No", n()>2)%>% ungroup(),position = position_nudge(x = -0.3),outlier.shape = NA, width = 0.3)+
+  ylab("log2 ( CPM )") +
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),axis.ticks.x = element_blank(),
+        legend.key.size = unit(0.5, 'cm'),legend.position = "bottom", 
+        plot.margin = margin(0.8, 0.2, 0.2, 0.2, "cm"),
+        panel.grid.major.x = element_blank())+
+  facet_grid( cols = vars(Project), rows = vars(gene), space = "free", switch = "y", scale = "free_x", margins = F)+
+  scale_color_manual(values = c("No" = "grey", "Yes" = "orange"))+
+  scale_y_continuous(position = "right")
+
+ggarrange(BRCA2_mRNA, BRIP1_mRNA, widths = c(0.25, 0.75), common.legend = T, legend = "bottom")
+ggsave(filename = "plots/Supplementary/Sup5_BRCA2_BRIP1_mRNA.pdf", height = 297/3, width = 200, units = "mm")
+
+```
+
+#Supplementary plot 6 - histo subtypes
+```{r}
+#breast
+breast_idh <- breast_idh %>%
+  dplyr::select(Sample.ID = `Sample ID`, `Cancer Type Detailed`) %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA") & Sample.ID %in% unlist(substr(histo_label$CLID, 1,15))) %>%
+  inner_join(TCGA_subtype %>%
+              filter(Project == "BC") %>%
+               mutate(Methylation = factor(Methylation, levels= methylation_lvl)) %>%
+              dplyr::select(Sample.ID, Methylation, Project) %>%
+              distinct())  
+
+breast_idh %>%
+  group_by(Methylation, `Cancer Type Detailed`) %>%
+  summarise(n=n()) %>%
+    ungroup() %>%
+   mutate(Methylation = factor(Methylation , levels = c("BRCA1", "RAD51C", "No"))) %>%
+  complete(Methylation, `Cancer Type Detailed`,
+           fill = list(n = 0)) %>%
+  fisher.test(x = t(matrix(.$n,byrow = T, nrow = 3))) -> breast_idh_fisher_output
+ 
+plot <-  breast_idh %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA")) %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1", "RAD51C", "No"))) %>%
+  group_by(Methylation, `Cancer Type Detailed`, Project) %>%
+  summarise(cnt = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  complete(Methylation, `Cancer Type Detailed`,
+           fill = list(cnt = 0)) %>%
+  filter(! is.na(Project) ) %>%
+  group_by(Project, `Cancer Type Detailed`) %>%
+  mutate(percent = cnt/sum(cnt)) %>%
+  ungroup() %>%
+  
+  ggplot(aes(fill = Methylation))+
+  scale_fill_manual(values =methylation_color,  name = "Methylated Gene")+
+  theme_bw()+
+  facet_wrap(~Project, scales = "free", nrow = 1) 
+
+idh <- ggarrange(plot + 
+              geom_bar(data = .%>% filter(Methylation != "No"), stat = "identity", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`, y = percent))+
+                theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")) +
+              scale_y_continuous(labels = scales::percent, "Subtype Distribution (%)"), 
+          plot + 
+            geom_bar(stat = "identity", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`, y = cnt)) + 
+            theme(plot.margin = margin(0,0,0,0, "lines"),
+                  panel.spacing = unit(0,"null"),strip.background = element_blank(),strip.text = element_blank(),
+                    axis.text.y = element_text(hjust=1.2), axis.text.x = element_text(angle = 45, hjust =1))+
+            scale_x_discrete(labels = wrap_format(20), "Immunohistochemistry Classification" )+
+             scale_y_continuous("Subtype Distribution (count)"),
+          nrow =2, align = "v",common.legend = T, legend = "bottom")
+
+ggsave(plot = idh, "plots/Supplementary/Sup6_BC_IDH_subtype_distribution.pdf", device = "pdf", height = 6, width = 12)
+
+#TGCT
+histo_stack_plot <- TCGA_subtype %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA"), Project == "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C", "BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  ggplot(aes(fill = Methylation)) +
+              geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`))+
+  scale_fill_manual(values =methylation_color, limits = force, name = "Methylated Gene")+
+  theme_bw()+
+  facet_wrap(~Project, scales = "free", nrow = 1)+
+            geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`)) + 
+            theme(plot.margin = margin(0,0,0,0, "lines"),
+                  panel.spacing = unit(0,"null"),strip.background = element_blank(),strip.text = element_blank(),
+                    axis.text.y = element_text(hjust=1.2), axis.text.x = element_text(angle = 45, hjust =1))+
+            scale_x_discrete(labels = wrap_format(20), "Histological Subtype" )+
+             scale_y_continuous("Subtype Distribution (count)")
+
+
+histo_percent_plot <- TCGA_subtype %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA"), Project == "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  group_by(Project, Methylation, `Cancer Type Detailed`) %>%
+  summarise(cnt = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  complete(Methylation, `Cancer Type Detailed`,
+           fill = list(cnt = 0)) %>%
+  filter(! is.na(Project) ) %>%
+  group_by(Project, `Cancer Type Detailed`) %>%
+  mutate(percent = cnt/sum(cnt)) %>%
+  ungroup() %>%
+  filter(Methylation != "No") %>%
+  ggplot(aes(fill = Methylation, y = percent, x = `Cancer Type Detailed`))+
+  geom_bar(stat = "identity", position = "stack", colour = "black", size=0.2)+
+  scale_fill_manual(values =methylation_color,  name = "Methylated Gene")+
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")) +
+              scale_y_continuous(labels = scales::percent, "Subtype Distribution (%)")+
+  facet_wrap(~Project, scales = "free", nrow = 1)
+
+histo <-  ggarrange(histo_percent_plot, histo_stack_plot,nrow =2, align = "v",common.legend = T, legend = "bottom")
+
+ggsave(plot = histo, "plots/Supplementary/Sup6_TGCT_histo_subtype_distribution.pdf", device = "pdf", height = 6, width = 12)
+
+
+
+#stomach 
+TCGA_subtype %>%
+  filter(Project == "STAD") %>%
+  dplyr::select(STAD_subtype =Subtype, cimp_label, Methylation, Sample.ID) %>%
+  mutate(cimp_label = factor(cimp_label, levels = c("CIMP+", "CIMP-")),
+         STAD_subtype = factor(STAD_subtype, levels = c("CIN", "EBV", "GS", "MSI", "POLE"))) %>%
+  filter(!is.na(STAD_subtype)) %>%
+  group_by(cimp_label, STAD_subtype) %>%
+  summarise(n=n()) %>%
+  ungroup() %>%
+  complete(cimp_label, STAD_subtype,
+           fill = list(n = 0)) %>%
+  fisher.test(x = t(matrix(.$n,byrow = T, nrow = 2))) -> fisher_output
+
+TCGA_subtype %>%
+  filter(Project == "STAD") %>%
+  dplyr::select(STAD_subtype=Subtype, cimp_label, Methylation, Sample.ID) %>%
+  mutate(cimp_label = factor(cimp_label, levels = c("CIMP+", "CIMP-"))) %>%
+  filter(!is.na(STAD_subtype)) %>%
+  ggplot(aes(x = STAD_subtype, fill = cimp_label)) +
+  geom_bar(position = "stack", colour = "black", size = 0.2)+
+  scale_fill_manual(values = col$"CIMP", limits = force, "CIMP subtype")+
+  theme_bw()+
+  annotate("text",x = "MSI", y= 190, label= paste0("Fisher's exact \n p-value =",signif(fisher_output$p.value,2)))+
+  theme(legend.position = "bottom")+
+  scale_y_continuous("CIMP Subtype Distribution (count)")+
+  scale_x_discrete("Molecular Subtype")
+
+ggsave("plots/Supplementary/Sup6_cimpvsEBV_stad.pdf", device = "pdf", height = 4, width = 8)
+
+```
+
+#Supplementary plot 7
+```{r}
+stat.test <- hrd_plot_df %>%
+  group_by(Project, Methylation, Predictor, .keep = T) %>%
+  filter(n() >2, !is.na(value)) %>%
+  ungroup() %>%
+  compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
+  left_join(hrd_plot_df %>%
+              group_by(Project,  Predictor, .keep = T) %>%
+              summarise(y.position = max(value)) %>%
+              ungroup() %>%
+              dplyr::select(Project, Predictor, y.position)) %>%
+  mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
+  group_by(Project, Predictor) %>%
+  mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- y.position)/n()*row_number()))   %>%
+  ungroup() 
+
+sig_plot <- hrd_plot_df %>%
+  ungroup() %>%
+  filter(Predictor == "Sig3")  %>%
+  ggplot(aes(x = Methylation, y = value, color =Methylation))+
+  geom_boxplot(outlier.shape = NA, data = . %>% ungroup()%>% group_by(Project, Methylation, .keep = T) %>%
+  filter(n() >2) %>% ungroup(), alpha = 0)+
+  geom_point(position = position_jitterdodge(jitter.width = 0.8), size = 0.8, alpha = 0.8)+
+  theme_bw()+
+  rotate_x_text(angle = 60)+
+  scale_color_manual(values= methylation_color, limits = force)+
+  scale_y_continuous("%SNV Sig3 Explained", limits = c(0,1), labels = scales::percent)+
+  theme(legend.position = "none", strip.text = element_blank(),
+        strip.background = element_blank(),
+         plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"))+
+  facet_grid(cols = vars(Project), rows = vars(Predictor), scales = "free", space = "free")+
+    stat_pvalue_manual(stat.test%>%
+  filter(Predictor == "Sig3"), label = "p.adj", tip.length = 0)
+  
+mutation_burden_plot <- mutation_burden %>%
+  mutate(Methylation = factor(Methylation, levels = methylation_lvl),
+         Project = factor(Project, levels = project_lvl)) %>%
+  group_by(parameter_name, .keep = T) %>%
+  group_map(~ ggplot(.x, aes(x = Methylation, y = value, color =Methylation))+
+  geom_boxplot(outlier.shape = NA, data = . %>% ungroup()%>% group_by(Project, Methylation, .keep = T) %>%
+  filter(n() >2) %>% ungroup(), alpha = 0)+
+ geom_point(position = position_jitterdodge(jitter.width = 0.8), size = 0.8, alpha = 0.8)+
+  theme_bw()+
+  rotate_x_text(angle = 60)+
+  scale_color_manual(values= methylation_color, limits = force)+
+  theme(legend.position = "none")+
+  scale_y_continuous(name =gsub("_"," ",.y)) +
+  facet_grid(cols = vars(Project), scales = "free", space = "free"), keep = T)
+
+ggarrange(
+   mutation_burden_plot[[3]]+
+     theme(legend.position = "none", strip.text.y = element_blank(),
+        axis.title.x = element_blank(), axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(), plot.margin = margin(0.5,0.5,0,0.5, "lines"), panel.spacing = unit(0,"null"),
+        axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black"))+
+     scale_y_log10("log10(TMB non-silent)") ,
+  mutation_burden_plot[[2]]+
+    geom_hline(yintercept = 3.5, linetype = "dotted")+
+  theme(legend.position = "none", strip.text = element_blank(),
+        axis.title.x = element_blank(), axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(), plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+        axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")),
+  mutation_burden_plot[[1]]+theme(legend.position = "none", strip.text = element_blank(),
+                 strip.background = element_blank(),
+                 plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"))
+  ,nrow = 3, align = "v")
+ggsave("plots/Supplementary/Sup7_mutation_burden.pdf", device = "pdf", height = 9, width = 12)
+```
+
+# Main figure1 - prevalence and expression
+```{r Main figure 1}
+
+#methylation, a & b
+ prevalence_plot <- beta_sub_meth_t %>%
+  mutate(Sample.ID = substr(Sample.ID, 1, 12)) %>%
+  dplyr::select(gene, Project, Methylation, Sample.ID) %>%
+  distinct() %>%
+  group_by(gene, Project) %>%
+  summarise(count = sum(Methylation== "Yes"), total = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  mutate(sum_methylated = sum(count)) %>%
+  ungroup()%>%
+  mutate(Prevalence = count/total) %>%
+  dplyr::rename(Gene_Methylated = gene, TCGA_dataset = Project) %>%
+  group_by(Gene_Methylated, .keep =T) %>%
+  group_map(~ ggplot(data = .x, aes(x=reorder(TCGA_dataset, -(sum_methylated/total)), y= Prevalence, fill = Gene_Methylated)) +
+  geom_bar(stat="identity", position="dodge") +
+  scale_fill_manual(name = "Gene Methylated", values = methylation_color, limits = force)+
+  scale_y_continuous(labels = scales::percent, name = "Prevalence of Methylation") +
+  scale_x_discrete(name = "Cancer Types") +
+  theme_bw()+
+  geom_text(aes(label=paste0(percent(Prevalence), "   " ,count," ", "/"," ", total), y = 0.05), colour="black", size =3, position=position_dodge(width = .9), angle = 90)+
+  theme(axis.text.x = element_text(vjust = 0.5), legend.key.size = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position = "none", legend.margin = margin(0,0,0,0), legend.box.margin=margin(-2,0,0,0),legend.justification = "top",rect = element_rect(fill = "transparent"), strip.background = element_rect(fill = "white", colour = "black"), panel.spacing = unit(0.2,'lines'),
+        plot.margin = margin(0.8, 0.2, 0.2, 0.2, "cm"))+
+  facet_wrap(~Gene_Methylated), .keep = T )
+
+#mRNA c & d
+beta_sub_meth_mrna_t <- beta_sub_meth_t %>%
+  left_join(mRNA %>% filter(Project != "OV") %>%
+              dplyr::select(BRCA1 = ENSG00000012048.23, 
+                RAD51C = ENSG00000108384.15,Sample.ID)) %>%
+  pivot_longer(cols = c("BRCA1","RAD51C"), names_to = "mRNA_gene", values_to ="mRNA_norm_counts") %>%
+  filter(gene == mRNA_gene) %>%
+  dplyr::select(-mRNA_gene) %>%
+  mutate(Sample.ID = if_else(Project =="OV", substr(Sample.ID, 1, 8), Sample.ID)) %>%
+  left_join(mRNA%>% filter(Project == "OV") %>%
+              dplyr::select(Sample.ID, BRCA1= ENSG00000012048, RAD51C = ENSG00000108384), by = c("Sample.ID")) %>%
+  pivot_longer(cols = c("BRCA1","RAD51C"), names_to = "mRNA_gene", values_to ="mRNA_norm_counts_icgc") %>%
+  filter(gene == mRNA_gene) %>%
+  mutate(mRNA_norm_counts = if_else(Project == "OV", mRNA_norm_counts_icgc, mRNA_norm_counts)) %>%
+  dplyr::select(-c("mRNA_gene", "mRNA_norm_counts_icgc")) 
+
+ #assessed no dup in Sample.ID, 1 per gene
+  mRNA_expr <-  beta_sub_meth_mrna_t %>%
+  filter(Project != "MESO", !is.na(mRNA_norm_counts)) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1, 12)) %>%
+  dplyr::select(gene, Project, Methylation, Sample.ID, mRNA_norm_counts) %>%
+  distinct() %>%
+  group_by(gene, Project) %>%
+  filter(sum(Methylation!= "No") >0) %>%
+  group_by(gene, .keep =T) %>%
+  mutate(Project = factor(Project, levels = c("OV","TGCT", "STAD", "LGG", "BC", "SKCM", "UCEC", "GBM","LIHC","COAD", "HNSC","LUSC","THCA","PAAD","ESCA","CESC","KIRC", "BLCA","LUAD")),
+         Methylation = factor(Methylation, levels = c("Yes", "No")))%>%
+  group_map(.f =  ~ ggplot(.x %>%
+                             mutate(), aes(x = Project, y = mRNA_norm_counts, color = Methylation))+
+  geom_point(position = position_jitterdodge(dodge.width = 1.2,jitter.width = 0.35), size = 0.5) +
+     geom_boxplot(data = .x %>% filter(Methylation == "No"),position = position_nudge(x = 0.3),outlier.shape = NA, width = 0.3, color = "#828181", fill = NA)+
+  geom_boxplot(data = .x %>% group_by(Project, Methylation) %>% filter(Methylation != "No", n()>2)%>% ungroup(),position = position_nudge(x = -0.3),outlier.shape = NA, width = 0.3, fill = NA)+
+  ylab("log2 ( CPM )") +
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),axis.ticks.x = element_blank(),
+        legend.key.size = unit(0.5, 'cm'),legend.position = "right", 
+        legend.margin = margin(0,0,0,0), legend.box.margin=margin(-10,0,0,0),legend.justification = "top",
+        strip.placement = "outside", strip.background = element_rect(fill = "white", colour = "white"), 
+        panel.border = element_rect(colour = "grey", fill = NA), panel.spacing = unit(0.2,'lines'),
+        plot.margin = margin(0.8, 0.2, 0.2, 0.2, "cm"),
+        panel.grid.major.x = element_blank()) +
+  facet_grid( cols = vars(Project) , space = "free", switch = "x", scale = "free_x", margins = F)+
+  ylim(-0.4,9)+
+  {if (.y[1]== "BRCA1") { scale_color_manual(values = methylation_color_brca1, "BRCA1 Methylation" )}
+    else {scale_color_manual(values = methylation_color_rad51c, "RAD51C Methylation")}} +
+  stat_compare_means(data = .x %>% group_by(Project, gene) %>%
+                     filter(sum(Methylation == "Yes")>2) %>%
+                    ungroup() %>% group_by(Project) %>%
+                      filter(n_distinct(Methylation) > 1), label = "p.format", label.y = 8, hide.ns =T, size = 2), keep =T)
+  
+#assemble plot
+  ggarrange(prevalence_plot[[1]]+theme(axis.title.x=element_blank()), 
+            prevalence_plot[[2]]+theme(axis.title.x=element_blank()), 
+            mRNA_expr[[1]]+ theme(axis.title.x = element_blank()),
+            mRNA_expr[[2]], align = "h",nrow = 4, labels = c("a", "b", "c", "d"))
+ggsave("plots/Main_Figure_1_Prevalence_of_RAD51C_BRCA1me.pdf", device = "pdf", width = 10, height = 12 )
+
+
+```
+#Main figure2 - frequent co-mutation
+```{r}
+  mut_beta_sub_meth_t  <- beta_sub_meth_t %>%
+  mutate(CaseID = substr(Sample.ID, 1, 12)) %>%
+  filter( Sample.ID %in% unique(mutation_icgc$Sample.ID) | CaseID %in% unique(substr(mc3$Tumor_Sample_Barcode, 1,12))) %>%
+  group_by(Project, gene) %>%
+  filter(sum(Methylation != "No") > 0) %>%
+  ungroup() %>%
+  filter(Project != "TGCT") %>%
+  mutate(Methylation= if_else(Methylation == "No", Methylation, gene)) %>%
+  dplyr::select(-gene) %>%
+  distinct() %>%
+  group_by(Project, Sample.ID) %>%
+  mutate(methylation_coexit = sum(Methylation != "No")) %>%
+  mutate(Methylation = if_else(methylation_coexit >1 , "BRCA1 & RAD51C", Methylation)) %>%
+  distinct() %>%
+  filter((methylation_coexit != 1) |(methylation_coexit ==1 & Methylation != "No")) %>%
+  ungroup() %>%
+  dplyr::select(-methylation_coexit)
+
+meth_per_gene <- mut_beta_sub_meth_t %>%
+  group_by(Methylation) %>%
+  summarise(n=n())
+
+meth_total_tcga <- meth_per_gene[which(meth_per_gene$Methylation == "BRCA1"), "n"]+meth_per_gene[which(meth_per_gene$Methylation == "RAD51C"), "n"]
+unmeth_total <- meth_per_gene[which(meth_per_gene$Methylation == "No"), "n"]
+brca1me_total_tcga <- meth_per_gene[which(meth_per_gene$Methylation == "BRCA1"), "n"]
+rad51cme_total_tcga <- meth_per_gene[which(meth_per_gene$Methylation == "RAD51C"), "n"]
+
+
+meth_per_gene_project <- mut_beta_sub_meth_t %>%
+  group_by(Methylation, Project) %>%
+  summarise(n=n()) %>%
+  pivot_wider(names_from = "Methylation",  values_from = "n", values_fill = 0) %>%
+  pivot_longer(cols = c("BRCA1", "RAD51C"), names_to = "Methylated_gene", values_to = "total_meth") %>%
+  dplyr::rename(total_unmeth = No)
+
+
+mut_beta_sub_meth_t_per_sample <- mut_beta_sub_meth_t %>%
+  mutate(Sample.ID = if_else(Project =="OV", substr(Sample.ID, 1, 27), substr(Sample.ID, 1, 15))) %>%
+  left_join(mc3_icgc %>%
+              mutate(Sample.ID = if_else(startsWith(Sample.ID, "AOC"), substr(Sample.ID, 1, 27), Sample.ID)) %>%
+  filter(silent_mutation == "No", Hugo_Symbol %in% oncokb_gene_list$`Hugo Symbol`)) %>%
+  distinct() 
+
+#total meth vs unmeth
+meth_unmeth_prev <- mut_beta_sub_meth_t_per_sample  %>%
+  group_by(Hugo_Symbol) %>%
+  summarise(Meth_mut = sum(Methylation != "No"),
+            Unmeth_mut = sum(Methylation == "No")) %>%
+  mutate(total_meth = unlist(meth_total_tcga), total_unmeth = unlist(unmeth_total),
+         Prevalence_Unmethylated = Unmeth_mut / total_unmeth,
+         Prevalence_Methylated = Meth_mut / total_meth ) %>%
+   group_by(Hugo_Symbol) %>%
+  mutate(fisher_p = fisher.test(matrix(c(Meth_mut, total_meth - Meth_mut , Unmeth_mut, total_unmeth - Unmeth_mut), byrow = T, ncol =2))$p) %>%
+  ungroup() %>%
+  mutate(pval.adj = p.adjust(fisher_p, method = "bonferroni")) %>%
+  mutate(pval.adj_plot = if_else(pval.adj >=0.05, "ns", "<0.05")) %>%
+  filter(!is.na(Hugo_Symbol)) %>%
+  ggplot(aes(y =Prevalence_Unmethylated, x =Prevalence_Methylated))+
+  geom_point(data = . %>%
+                filter(pval.adj >=0.05),color = "grey", alpha = 0.7)+
+  geom_point(data = . %>%
+                filter(pval.adj <0.05),color = "red")+
+  geom_abline(linetype="dashed")+
+  geom_label_repel(data = .%>% filter(Prevalence_Unmethylated>0.45 |Prevalence_Methylated>0.45), aes(label = Hugo_Symbol),size = 3, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  geom_label_repel(data = .%>% filter(pval.adj <0.05), aes(label = Hugo_Symbol), colour = "red", size = 3, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  theme_bw()+
+  scale_color_manual(values = c("ns" = "grey", "<0.05" = "red"), "adjusted p value")+
+  scale_x_continuous(paste0("Mutation Frequency in Methylated Samples (N=",unlist(meth_total_tcga),")"), limits = c(0,1), labels = scales::percent)+
+  scale_y_continuous(paste0("Mutation Frequency in Unmethylated Samples (N=",unlist(unmeth_total),")"), limits = c(0,1),labels = scales::percent)+
+  theme(legend.position = "bottom")
+ggsave(plot = meth_unmeth_prev, "plots/Sup6_meth_unmeth_mutation_prevalence.pdf", device = "pdf")
+
+#by gene
+brca1_rad51c_unmeth_prev_table <- mut_beta_sub_meth_t_per_sample  %>%
+  group_by(Hugo_Symbol) %>%
+  summarise(BRCA1 = sum(Methylation == "BRCA1"),
+            RAD51C = sum(Methylation == "RAD51C"),
+            Unmeth_mut = sum(Methylation == "No"))%>%
+  pivot_longer(cols = c("BRCA1", "RAD51C"), names_to= "Methylated_gene", values_to = "Meth_mut") %>%
+  ungroup() %>%
+  complete(Hugo_Symbol, Methylated_gene, fill = list(Unmeth_mut = 0, Meth_mut = 0)) %>%
+  mutate(total_meth = if_else(Methylated_gene == "BRCA1", unlist(brca1me_total_tcga), unlist(rad51cme_total_tcga)),
+         total_unmeth = unlist(unmeth_total),
+         Prevalence_Unmethylated = Unmeth_mut / total_unmeth,
+         Prevalence_Methylated = Meth_mut / total_meth) %>%
+  group_by(Methylated_gene, Hugo_Symbol) %>%
+  mutate(fisher_p = fisher.test(matrix(c(Meth_mut, total_meth - Meth_mut, Unmeth_mut, total_unmeth - Unmeth_mut), byrow = T, ncol =2))$p) %>%
+  ungroup() %>%
+  group_by(Methylated_gene, .keep =T) %>%
+  mutate(pval.adj = p.adjust(fisher_p, method = "bonferroni")) %>%
+  mutate(pval.adj_plot = if_else(pval.adj >=0.05, "ns", "<0.05")) 
+
+write_tsv(brca1_rad51c_unmeth_prev_table, "data/supplementary_data/Supplementary_Table_2_mutation_by_gene.tsv")
+
+
+brca1_rad51c_unmeth_prev  <- brca1_rad51c_unmeth_prev_table %>%
+  group_map(~ggplot(.x, aes(y =Prevalence_Unmethylated, x = Prevalence_Methylated))+
+  geom_point(aes(color = pval.adj_plot), alpha = 0.7)+
+  geom_abline(linetype="dashed")+
+  geom_label_repel(data = .%>% filter(pval.adj >=0.05, (Prevalence_Methylated>= 0.25| Prevalence_Unmethylated>= 0.25)), aes(label = Hugo_Symbol), colour = "black",size = 3, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  geom_label_repel(data = .%>% filter(pval.adj <0.05), aes(label = Hugo_Symbol), colour = "red", size = 3, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  theme_bw()+
+  facet_wrap(~Methylated_gene, nrow = 2, scale = "free")+
+  scale_color_manual(values = c("ns" = "grey", "<0.05" = "red"), "adjusted p value")+
+  scale_x_continuous(paste0("N = ",unique(.x$total_meth)), limits = c(0,1), labels = scales::percent)+
+  scale_y_continuous(paste0("N = ",unique(.x$total_unmeth)), limits = c(0,1),labels = scales::percent)+
+  theme(legend.position = "none",
+        strip.text.x = element_text(face = "bold.italic")), .keep =T)
+
+plot_order <- c("BRCA1","RAD51C")
+brca1_rad51c_unmeth_prev <- lapply(1:length(brca1_rad51c_unmeth_prev),function(i) change_facet_strip_color(brca1_rad51c_unmeth_prev[[i]], methylation_color[plot_order[i]]) )
+
+#by project & gene 
+type_brca1_rad51c_prev_table <- mut_beta_sub_meth_t_per_sample  %>%
+  group_by(Hugo_Symbol, Project) %>%
+  mutate(Unmeth_mut = sum(Methylation == "No")) %>%
+  ungroup() %>%
+  group_by(Hugo_Symbol, Project, Methylation) %>%
+  mutate(Meth_mut = n_distinct(Sample.ID)) %>%
+  ungroup()%>%
+  filter(Methylation != "No") %>%
+  dplyr::select(-Sample.ID, -silent_mutation) %>%
+  distinct() %>%
+  complete(Project, Methylation, Hugo_Symbol, fill = list(Unmeth_mut =0, Meth_mut = 0)) %>%
+  dplyr::rename(Methylated_gene = Methylation) %>%
+  inner_join(meth_per_gene_project %>%filter(total_meth >3), by = c("Methylated_gene", "Project")) %>%
+  mutate(Prevalence_Unmethylated = Unmeth_mut/total_unmeth,
+         Prevalence_Methylated = Meth_mut/total_meth) %>%
+  dplyr::select(-CaseID) %>%
+  distinct() %>%
+  group_by(Methylated_gene, Hugo_Symbol, Project) %>%
+  mutate(fisher_p = fisher.test(matrix(c(Meth_mut, total_meth - Meth_mut, Unmeth_mut, total_unmeth - Unmeth_mut), byrow = T, ncol =2))$p) %>%
+  ungroup() %>%
+  group_by(Project, Methylated_gene, .keep = T) %>%
+  mutate(pval.adj = p.adjust(fisher_p, method = "bonferroni")) %>%
+mutate(pval.adj_plot = if_else(pval.adj >=0.05, "ns", "<0.05"))
+
+
+write_tsv(type_brca1_rad51c_prev_table, "data/supplementary_data/Supplementary_Table_2_mutation_by_project_gene.tsv")
+type_brca1_rad51c_prev <- type_brca1_rad51c_prev_table%>%
+  group_map(~ggplot(.x, aes(y =Prevalence_Unmethylated, x = Prevalence_Methylated))+
+  geom_point(aes(color = pval.adj_plot), alpha = 0.7)+
+  geom_abline(linetype="dashed")+
+  geom_label_repel(data = .%>% filter(pval.adj  >= 0.05 &(Prevalence_Methylated>= 0.4 | Prevalence_Unmethylated>= 0.4| Hugo_Symbol %in% c("PIK3CA", "TP53"))), aes(label = Hugo_Symbol), colour = "black", size = 2, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  geom_label_repel(data = .%>% filter(pval.adj <0.05), aes(label = Hugo_Symbol), colour = "red", size = 2, fill = NA, box.padding = 0.1, label.padding = 0.1)+
+  theme_bw()+
+  facet_wrap(~Project)+
+  scale_color_manual(values = c("ns" = "grey", "<0.05" = "red"), "adjusted p value")+
+  scale_x_continuous(paste0("N = ",unique(.x$total_meth)), limits = c(0,1.05), labels = scales::percent)+
+  scale_y_continuous(paste0("N = ",unique(.x$total_unmeth)),  limits = c(0,1),labels = scales::percent)+
+  theme(legend.position = "none", axis.title = element_text(size = 8)), .keep = T)
+
+#manual inspect and assign
+plot_order <- c("BRCA1",rep("RAD51C",2),"BRCA1", "RAD51C","BRCA1")
+type_brca1_rad51c_prev <- lapply(1:length(type_brca1_rad51c_prev),function(i) change_facet_strip_color(type_brca1_rad51c_prev[[i]], methylation_color[plot_order[i]]) )
+
+
+gene_brca1_prev <- grid.arrange(grobs = brca1_rad51c_unmeth_prev[1], nrow = 1,left = "Mutation Frequency in Unmethylated Sample",
+             bottom = "Mutation Frequency in Methylated Sample")
+
+gene_rad51c_prev <- grid.arrange(grobs = brca1_rad51c_unmeth_prev[2], nrow = 1,left = "Mutation Frequency in Unmethylated Sample",
+             bottom = "Mutation Frequency in Methylated Sample")
+type_brca1_prev <- grid.arrange(grobs = type_brca1_rad51c_prev[c(1,4,6)], layout_matrix = rbind(c(1,2),
+                                                                                c(3, NA)),left = "Mutation Frequency in Unmethylated Sample",
+             bottom = "Mutation Frequency in Methylated Sample")
+
+type_rad51c_prev <- grid.arrange(grobs = type_brca1_rad51c_prev[c(5, 3, 2)], layout_matrix = rbind(c(1,2),
+                                                                                c(3,NA)),left = "Mutation Frequency in Unmethylated Sample",
+             bottom = "Mutation Frequency in Methylated Sample")
+
+plot2 <- ggarrange(arrangeGrob(gene_brca1_prev), arrangeGrob(gene_rad51c_prev),
+                   arrangeGrob(type_brca1_prev),arrangeGrob(type_rad51c_prev),nrow = 2, ncol =2, labels = c("a","b","c","d"))
+
+
+ggsave(plot = plot2 , "plots/Main_Figure_2_Mutation_prevalence_by_methylation.pdf", device = "pdf", width = 250, height = 240, units= "mm")
+
+```
+#Main figure3 - histo subtype
+```{r}
+histo_stack_plot <- TCGA_subtype %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA"), Project != "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C", "BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  ggplot(aes(fill = Methylation)) +
+              geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`))+
+  scale_fill_manual(values =methylation_color, limits = force, name = "Methylated Gene")+
+  theme_bw()+
+  facet_wrap(~Project, scales = "free", nrow = 1)+
+            geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = `Cancer Type Detailed`)) + 
+            theme(plot.margin = margin(0,0,0,0, "lines"),
+                  panel.spacing = unit(0,"null"),strip.background = element_blank(),strip.text = element_blank(),
+                    axis.text.y = element_text(hjust=1.2), axis.text.x = element_text(angle = 45, hjust =1))+
+            scale_x_discrete(labels = wrap_format(20), "Histological Subtype" )+
+             scale_y_continuous("Subtype Distribution (count)")
+
+
+histo_percent_plot <- TCGA_subtype %>%
+  filter(!(is.na(`Cancer Type Detailed`)| `Cancer Type Detailed` == "NA"), Project != "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  group_by(Project, Methylation, `Cancer Type Detailed`) %>%
+  summarise(cnt = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  complete(Methylation, `Cancer Type Detailed`,
+           fill = list(cnt = 0)) %>%
+  filter(! is.na(Project) ) %>%
+  group_by(Project, `Cancer Type Detailed`) %>%
+  mutate(percent = cnt/sum(cnt)) %>%
+  ungroup() %>%
+  filter(Methylation != "No") %>%
+  ggplot(aes(fill = Methylation, y = percent, x = `Cancer Type Detailed`))+
+  geom_bar(stat = "identity", position = "stack", colour = "black", size=0.2)+
+  scale_fill_manual(values =methylation_color,  name = "Methylated Gene")+
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")) +
+              scale_y_continuous(labels = scales::percent, "Subtype Distribution (%)")+
+  facet_wrap(~Project, scales = "free", nrow = 1)
+
+
+histo <- ggarrange(histo_percent_plot, histo_stack_plot,nrow =2, align = "v",common.legend = T, legend = "none")
+
+
+subtype_stack_plot <- TCGA_subtype %>%
+  filter(!(is.na(Subtype)| Subtype == "NA"), Project != "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C", "BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  ggplot(aes(fill = Methylation)) +
+              geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = Subtype))+
+  scale_fill_manual(values =methylation_color, limits = force, name = "Methylated Gene")+
+  theme_bw()+
+  facet_wrap(~Project, scales = "free", nrow = 1)+
+            geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = Subtype)) + 
+            theme(plot.margin = margin(0,0,0,0, "lines"),
+                  panel.spacing = unit(0,"null"),strip.background = element_blank(),strip.text = element_blank(),
+                    axis.text.y = element_text(hjust=1.2), axis.text.x = element_text(angle = 45, hjust =1))+
+            scale_x_discrete(labels = wrap_format(20), "Histological Subtype" )+
+             scale_y_continuous("Subtype Distribution (count)")
+
+
+subtype_percent_plot <- TCGA_subtype %>%
+  filter(!(is.na(Subtype)| Subtype == "NA"), Project != "TGCT") %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT","OV", "STAD","LGG","BC", "UCEC"))) %>%
+  group_by(Project, Methylation, Subtype) %>%
+  summarise(cnt = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  complete(Methylation, Subtype,
+           fill = list(cnt = 0)) %>%
+  filter(! is.na(Project) ) %>%
+  group_by(Project, Subtype) %>%
+  mutate(percent = cnt/sum(cnt)) %>%
+  ungroup() %>%
+  filter(Methylation != "No") %>%
+  ggplot(aes(fill = Methylation, y = percent, x = Subtype))+
+  geom_bar(stat = "identity", position = "stack", colour = "black", size=0.2,show.legend = FALSE)+
+  scale_fill_manual(values =methylation_color,  name = "Methylated Gene", limits = force)+
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")) +
+              scale_y_continuous(labels = scales::percent, "Subtype Distribution (%)")+
+  facet_wrap(~Project, scales = "free", nrow = 1)
+
+
+
+subtype_stack_plot <- TCGA_subtype %>%
+  filter(!(is.na(Subtype)| Subtype == "NA"), Project != "TGCT", !is.na(Project)) %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C", "BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT","STAD","LGG","BC", "UCEC"))) %>%
+  ggplot(aes(fill = Methylation)) +
+              geom_bar(stat = "count", position = "stack", colour = "black", size=0.2, aes( x = Subtype))+
+  scale_fill_manual(values =methylation_color, limits = force, name = "Methylated Gene")+
+  theme_bw()+
+  facet_wrap(~Project, scales = "free", nrow = 1)+
+            theme(plot.margin = margin(0,0,0,0, "lines"),
+                  panel.spacing = unit(0,"null"),strip.background = element_blank(),strip.text = element_blank(),
+                    axis.text.y = element_text(hjust=1.2), axis.text.x = element_text(angle = 45, hjust =1))+
+            scale_x_discrete(labels = wrap_format(20), "Molecular Subtype" )+
+             scale_y_continuous("Subtype Distribution (count)")
+
+
+subtype_percent_plot <- TCGA_subtype %>%
+  filter(!(is.na(Subtype)| Subtype == "NA"),Project != "TGCT", !is.na(Project)) %>%
+  mutate(Methylation = factor(Methylation, levels = c("BRCA1 & RAD51C","BRCA1", "RAD51C", "No")),
+         Project = factor(Project, levels = c("TGCT", "STAD","LGG","BC", "UCEC"))) %>%
+  group_by(Project, Methylation, Subtype) %>%
+  summarise(cnt = n()) %>%
+  ungroup() %>%
+  group_by(Project) %>%
+  complete(Methylation, Subtype,
+           fill = list(cnt = 0)) %>%
+  filter(! is.na(Project) ) %>%
+  group_by(Project, Subtype) %>%
+  mutate(percent = cnt/sum(cnt)) %>%
+  ungroup() %>%
+  filter(Methylation != "No") %>%
+  ggplot(aes(fill = Methylation, y = percent, x = Subtype))+
+  geom_bar(stat = "identity", position = "stack", colour = "black", size=0.2,show.legend = FALSE)+
+  scale_fill_manual(values =methylation_color,  name = "Methylated Gene", limits = force)+
+  theme_bw()+
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")) +
+              scale_y_continuous(labels = scales::percent, "Subtype Distribution (%)")+
+  facet_wrap(~Project, scales = "free", nrow = 1)
+
+
+molecular <- ggarrange(subtype_percent_plot, subtype_stack_plot,nrow =2, align = "v", legend = "bottom")
+
+ggarrange(histo, NA, molecular, nrow = 3, align = "v", heights = c(0.44,0.02, 0.44), labels = c("a", "b"))
+
+ggsave("plots/Main_Figure_3_Subtype_distribution.pdf",device = "pdf", height = 11,width = 12)
+     
+```
+#Man figure4
+```{r}
+
+TCGA_subtype %>%
+  filter(Project == "BC", !is.na(cimp_label),  Subtype =="Basal") %>%
+  mutate(TP53= if_else(is.na(TP53), "WT", "MUT"), 
+         Methylation = if_else(Methylation  =="RAD51C", "No", Methylation)) %>%
+  group_by(Methylation, TP53) %>%
+  summarise(n=n()) %>%
+  ungroup() %>%
+  fisher.test(x= t(matrix(.$n,byrow = T, nrow = 2)))
+oncoprint_matrix<- TCGA_subtype %>%
+  filter(! Methylation == "No", !Project== "TGCT", Sample.ID %in% unique(substr(mc3_icgc$Sample.ID, 1,27))) %>%
+  group_by(Project, Methylation) %>%
+  filter(Project %in% c("OV", "STAD","LGG","BC", "UCEC")) %>%
+  mutate(Project = factor(Project, levels = c("OV", "STAD","LGG","BC", "UCEC")),
+         Methylation = factor(Methylation, levels = c("BRCA1", "RAD51C")),
+         project_number = as.integer(Project))%>%
+  dplyr::select(-`Cancer Type Detailed`,-`Mutation Count`, -`Fraction Genome Altered`, -MSI_Score, -Aneuploidy_Score, -TMB_nonsilent) %>%
+ replace(is.na(.), "") %>%
+  distinct() %>%
+  ungroup() %>%
+  arrange(Project,Methylation, desc(TP53), cimp_label) %>%
+  mutate(STAD_subtype = if_else(Project =="STAD" & Subtype != "", Subtype, "NA"),
+         LGG_subtype = if_else(Project =="LGG"& Subtype != "", Subtype, "NA"),
+         BC_subtype = if_else(Project =="BC"& Subtype != "", Subtype, "NA"),
+         UCEC_subtype = if_else(Project =="UCEC"& Subtype != "", Subtype, "NA"),
+         cimp_label = if_else(cimp_label != "", cimp_label, "NA")) %>%
+  mutate(number = row_number()) %>%
+  t()
+colnames(oncoprint_matrix) <- oncoprint_matrix["Sample.ID",]
+
+
+#assemble oncoprint
+alter_fun = list(
+    background = function(x, y, w, h) {
+        grid.rect(x, y, w-unit(2, "pt"), h-unit(2, "pt"),
+            gp = gpar(fill = "#DDDDDD", col = NA))
+    },
+    `NA` = function(x, y, w, h) {
+        grid.rect(x, y, w-unit(2, "pt"), h-unit(2, "pt"),
+            gp = gpar(fill = "white", col = NA))
+    },
+    MUT = function(x, y, w, h) {
+        grid.rect(x, y, w-unit(2, "pt"), h-unit(2, "pt"),
+            gp = gpar(fill =  "#EE8A8A", col = NA))
+    },
+    Conseq = function(x, y, w, h) {
+        grid.roundrect(x, y, w-unit(2, "pt"), h*0.1,
+            gp = gpar(fill = "#616161", col = NA))
+    }
+)
+
+onco <- oncoPrint(
+  oncoprint_matrix[gene_list,],
+  alter_fun = alter_fun,
+  show_pct = FALSE,
+  row_names_side = "left",
+  top_annotation =HeatmapAnnotation(
+    Project = anno_block(labels= c("OV","STAD","LGG","BC", "UCEC"),labels_gp = gpar(fontsize = 10)),
+    Methylation = factor(oncoprint_matrix["Methylation",], levels = c( "BRCA1", "RAD51C")),
+    col = col,annotation_name_gp = gpar(fontsize= 10), annotation_name_side = "left", gp = gpar(col = "white"),
+    STAD_subtype = factor(oncoprint_matrix["STAD_subtype",], levels = c("EBV", "CIN", "GS", "MSI", "POLE", "NA")),
+    LGG_subtype = factor(oncoprint_matrix["LGG_subtype",], levels = c("IDHmut codel", "IDHmut non-codel", "IDHwt", "NA")),
+    BC_subtype = factor(oncoprint_matrix["BC_subtype",], levels = c("Basal", "Her2", "LumA", "LumB", "Normal", "NA")),
+    UCEC_subtype = factor(oncoprint_matrix["UCEC_subtype",], levels = c("CN HIGH","MSI", "NA")),
+   CIMP =factor(oncoprint_matrix["cimp_label",], levels = c("CIMP+", "CIMPi", "CIMP-", "NA"))
+     # ,Meth_lvl =oncoprint_matrix["Methylation_lvl",]
+   ),
+  column_title = NULL, column_order = as.numeric(oncoprint_matrix["number",]),
+  column_split = oncoprint_matrix["project_number",],
+  heatmap_legend_param = list(direction = "horizontal",title = "Gene Mutation"))
+
+pdf("plots/Main_Figure_4_oncoprint_methylated.pdf", height = 8.3,width = 15)
+  # pdf("oncoprint_methylated_level.pdf", height = 8.3,width = 15)
+
+draw(onco, annotation_legend_side = "bottom", heatmap_legend_side = "bottom", merge_legend = TRUE)
+dev.off()
+```
+#Main figure5
+```{r}
+hrd_plot_df <- hrd_predictors   %>%
+  filter(!is.na(HRD_Score), !is.na(Sig3),Project != "TGCT") %>%
+  group_by(Project) %>%
+  filter(sum(Methylation != "No") >2) %>%
+  ungroup() %>%
+  mutate(Project = factor(Project, levels = project_lvl),
+         Methylation = factor(Methylation, levels = methylation_lvl)) %>%
+#   filter(Project %in% c("TGCT", "STAD","LGG","BC", "UCEC") )%>%
+ mutate(Project = factor(Project, levels = c("OV", "TGCT", "STAD", "BC","LGG", "UCEC", "COAD", "LUSC", "HNSC")),
+          project_number = as.integer(Project))%>%
+  # filter(!is.na(Sig3) | !is.na(Sig8)) %>%
+  pivot_longer(cols = c(Sig3, HRD_Score), names_to = "Predictor", values_to = "value")
+
+stat.test <- hrd_plot_df %>%
+  group_by(Project, Methylation, Predictor, .keep = T) %>%
+  filter(n() >2, !is.na(value)) %>%
+  ungroup() %>%
+  compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
+  left_join(hrd_plot_df %>%
+              group_by(Project,  Predictor, .keep = T) %>%
+              summarise(y.position = max(value)) %>%
+              ungroup() %>%
+              dplyr::select(Project, Predictor, y.position)) %>%
+  mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
+  group_by(Project, Predictor) %>%
+  mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- y.position)/n()*row_number()))   %>%
+  ungroup() 
+
+
+hrd_plot <- hrd_plot_df %>%
+  ungroup() %>%
+  filter(Predictor == "HRD_Score")  %>%
+  ggplot(aes(x = Methylation, y = value, color =Methylation))+
+  geom_point(position = position_jitterdodge(jitter.width = 0.8), size = 0.8, alpha = 0.8)+
+  geom_boxplot(outlier.shape = NA, data = . %>% ungroup()%>% group_by(Project, Methylation, .keep = T) %>%
+  filter(n() >2) %>% ungroup(), alpha = 0)+
+  theme_bw()+
+  geom_hline(yintercept = 42, linetype = 3)+
+  rotate_x_text(angle = 60)+
+  scale_color_manual(values= methylation_color, limits = force)+
+  scale_y_continuous("HRD Score", limits = c(0, 102))+
+  theme(legend.position = "none", strip.text.y = element_blank(),
+        axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), 
+                    plot.margin = margin(0.3,0.3,0,0.3, "lines"), panel.spacing = unit(0,"null"),
+                    axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black"))+
+  facet_grid(cols = vars(Project), rows = vars(Predictor), scales = "free", space = "free")+
+    stat_pvalue_manual(stat.test%>%
+  filter(Predictor == "HRD_Score"), label = "p.adj", tip.length = 0)
+  
+  
+sig_plot <- hrd_plot_df %>%
+  ungroup() %>%
+  filter(Predictor == "Sig3")  %>%
+  ggplot(aes(x = Methylation, y = value, color =Methylation))+
+  geom_point(position = position_jitterdodge(jitter.width = 0.8), size = 0.8, alpha = 0.8)+
+  geom_boxplot(outlier.shape = NA, data = . %>% ungroup()%>% group_by(Project, Methylation, .keep = T) %>%
+  filter(n() >2) %>% ungroup(), alpha = 0)+
+  theme_bw()+
+  rotate_x_text(angle = 60)+
+  scale_color_manual(values= methylation_color, limits = force)+
+  scale_y_continuous("%SNV Sig3 Explained", limits = c(0,1), labels = scales::percent)+
+  theme(legend.position = "none", strip.text = element_blank(),
+        strip.background = element_blank(),
+         plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"))+
+  facet_grid(cols = vars(Project), rows = vars(Predictor), scales = "free", space = "free")+
+    stat_pvalue_manual(stat.test%>%
+  filter(Predictor == "Sig3"), label = "p.adj", tip.length = 0)
+
+
+ggarrange(hrd_plot, sig_plot,common.legend = T, legend = "bottom", nrow =2, align = "v")
+ggsave("plots/Main_Figure_5_hrd_predictor.pdf", device = "pdf", height = 6, width = 12)
+
+```
+
+
+#XRCC3 prad
+```{r}
+mRNA_sample <- map_dfr(Sys.glob("data/raw/*_UCEC_meth/mRNA/TCGA_*_mRNA_sample.tsv"), ~as.data.frame(data.table::fread(.x, header =T, na.string="", fill = T, check.names = T, sep = "\t"), row.names = 1))%>%
+  mutate(File.Name = gsub("-",".",gsub(".rna_seq.augmented_star_gene_counts.tsv", "",basename(File.Name)))) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1, 15))
+
+mRNA <- map_dfr(Sys.glob("data/side_project/TCGA_UCEC_mRNA_edgeR.csv"), ~as.data.frame(t(data.frame(data.table::fread(.x, header = T, na.string = "", fill = T), row.names = 1))))%>%
+  mutate(File.Name = gsub(".rna_seq.augmented_star_gene_counts.tsv", "", gsub("^X", "", rownames(.))))%>%
+  left_join(mRNA_sample, by = "File.Name")
+
+ucec_xrcc3 <- beta_sub %>%
+  filter(gene == "XRCC3", Sample_Group %in% c("Solid Tissue Normal", "Primary Tumor"),) %>%
+  mutate(Case.ID = substr(Sample.ID, 1, 12),
+         CpG = factor(CpG, levels = unique(beta_sub$CpG[order(beta_sub$chr_start)]))) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1,15)) %>%
+  left_join(mRNA %>%
+              dplyr::select(XRCC3 = ENSG00000126215.14, Sample.ID)) %>%
+  filter(!is.na(XRCC3)) %>%
+  group_by(Case.ID) %>%
+  filter(n_distinct(Sample_Group) >1) %>%
+  ungroup()
+
+ucec_xrcc3 %>%
+  ggplot(aes(x = CpG, y = beta, group = Sample_Name, color = XRCC3))+
+  geom_point()+
+  geom_line()+
+  scale_color_continuous(type = "viridis", "XRCC3 mRNA expression")+
+  facet_wrap( ~ Case.ID, ncol = 3)+
+  theme_bw()+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "bottom")
+
+ggsave("plots/XRCC3_mRNA_CpG_expression_assessment_UCEC.pdf", width = 210, height = 297, units = "mm")
+ucec_xrcc3 %>%
+  ggplot(aes(x = beta, y = XRCC3, color = Case.ID, group = Case.ID))+
+  geom_point()+
+  geom_line()+
+  facet_wrap( ~ CpG)+
+  theme_bw()+
+  theme(legend.position = "none")
+dev.off()
+  
+ucec_xrcc3 %>% 
+  ggplot(aes(x = beta, y = XRCC3, color = Case.ID))+
+  geom_point()+
+  facet_wrap( ~ CpG)+
+  theme_bw()+
+  geom_smooth(method = "lm")+
+  stat_cor() +
+  theme(legend.position = "none")
+
+```
+# deduplicate stats
+```{r}
+Deduplicated_beta %>%
+  filter(Sample_Group %in% c("Primary Tumor"), Sample_Name %in% Deduplicated_beta$Sample_Name) %>%
+  dplyr::select(Project, Sample_Name, Sample_Group, Sample.ID) %>%
+        distinct() %>%
+   mutate( Sample_Group = gsub("Tumour", "Tumor", Sample_Group),
+           CaseID = if_else(Project =="ICGC_OV", substr(start = 1,stop = 8, Sample.ID), substr(start = 1,stop = 12, Sample.ID) )) %>%
+  left_join( rbind(map_dfr(Sys.glob("data/raw/*/*clinical.tsv"), ~ as.data.frame(fread(.x, header = T, na.strings = "'--", fill = T,  colClasses = "character"))) %>%
+               mutate(age = as.numeric(age_at_index)) %>%
+                dplyr::select(stage = ajcc_pathologic_stage, gender, race, age, CaseID=case_submitter_id),
+ fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/Patch_2015_ICGC_donor.tsv") %>%
+  mutate(CaseID = gsub("-", "_", submitted_donor_id,),
+         race = "not reported",
+         stage = paste("Stage", donor_tumour_stage_at_diagnosis, sep = " ")) %>%
+  dplyr::select(stage, gender= donor_sex, race, age = donor_age_at_diagnosis, CaseID)), by = "CaseID")%>%
+  mutate(race = if_else(Project == "ICGC_OV", "not reported", race),
+         stage = if_else(is.na(stage), "not reported", stage)) %>%
+    distinct()-> demograph_table
+  
+                
+write.csv(demograph_table, "data/processed/demograph_table.csv", quote = F, row.names = F)
+
+
+meth_list <- fread("data/processed/TCGA_ICGC_methylation_list.tsv") %>%
+  filter(Methylation != "No") %>%
+  mutate(CaseID =if_else(Project =="OV", substr(start = 1,stop = 8, Sample.ID), substr(start = 1,stop = 12, Sample.ID))) %>%
+  dplyr::select(-Sample.ID,- Project)
+demograph_table %>%
+  right_join(meth_list) -> demograph_table_meth
+
+
+write.csv(demograph_table_meth, "data/processed/demograph_table_meth.csv", quote = F, row.names = F)
 
 ```

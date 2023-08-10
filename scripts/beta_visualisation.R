@@ -6,7 +6,7 @@ directory = args[2]
 
 genecodefile = paste0(directory, "/data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz")
 gene_promoter_info = paste0(directory, "/data/supporting/EPDnew_human_ver006_hg38.tsv")
-HR_gene_list = c("BRCA1","BRCA2","RAD51C","RAD51D","BRIP1","PALB2","CHEK2")
+HR_gene_list = c("BRCA1","BRCA2","RAD51C","RAD51D","BRIP1","PALB2","CHEK2", "XRCC3", "RAD51B")
 
 # load package
 suppressMessages(suppressWarnings(library(data.table)))
