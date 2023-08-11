@@ -459,6 +459,37 @@ mutation_burden <- TCGA_subtype %>%
 
   
 ```
+```{r}
+```
+#ethnicity
+```{r}
+consensus_ethnicity <- read_xlsx("data/supporting/Carrot_Zhang_J_Cancer_Cell_2020_supp_10AUG23.xlsx", skip = 1)
+consensus_ethnicity %>%
+  dplyr::select(CaseID = patient, tumor_type, consensus_ancestry) %>%
+right_join(meth_list) %>%
+  left_join(map_dfr(Sys.glob("data/raw/*/*clinical.tsv"), ~ as.data.frame(fread(.x, header = T, na.strings = "'--", fill = T,  colClasses = "character"))) %>%
+              mutate(Project = gsub("TCGA-", "", project_id)) %>%
+                dplyr::select(race, ethnicity, CaseID=case_submitter_id, Project)) %>%
+  filter(!startsWith(CaseID, "AOCS_"), Project != "MESO") %>%
+  distinct() %>%
+   group_by(CaseID) %>%
+  mutate(Methylation = paste(gene, collapse = "&")) %>%
+  dplyr::select(-gene) %>%
+  ungroup() %>%
+  mutate(tumor_type = if_else(is.na(tumor_type), Project, tumor_type)) %>%
+  distinct() %>%
+  group_by(tumor_type, Methylation, consensus_ancestry) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = Methylation, fill = consensus_ancestry, y = n))+
+  geom_bar(stat = "identity")+
+    # facet_wrap(~tumor_type, scale = "free", ncol = 8)+
+  theme_bw()+
+  xlab("Stage at Diagnosis")+
+  ylab("Number of Patients")+
+  theme(legend.position = "bottom")+
+   scale_y_continuous(breaks = function(x) unique(floor(pretty(seq(0, (max(x) + 1) * 1.1)))))
+
+```
 #Supplementary table 
 ```{r sample avilability for each assay}
 
@@ -1002,7 +1033,7 @@ ggsave("plots/Supplementary/Sup6_cimpvsEBV_stad.pdf", device = "pdf", height = 4
 
 ```
 
-#Supplementary plot 7
+#Supplementary plot 7 - HRD predictors
 ```{r}
 stat.test <- hrd_plot_df %>%
   group_by(Project, Methylation, Predictor, .keep = T) %>%
