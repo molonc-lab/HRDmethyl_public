@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library("purrr")
 library("data.table")
 library("tidyverse")
+library(ChAMP)
 ```
 
 ```{r}
@@ -19,20 +20,20 @@ beta_p_value = "../data/processed/methylation/ICGC_OV_beta_pvalue.csv"
 clinical_csv = "../data/raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"
 purity_csv = "../data/processed/ICGC_OV_purity.csv"
 demographic_csv = "../data/supporting/Patch_2015_ICGC_donor.tsv"
+Deduplicated_beta <- map_dfr(Sys.glob("../data/processed/methylation/*deduplicated_sample.csv"),
+                             ~ fread(.x, header = T, na.strings = "", fill = T) %>%
+  mutate(Project = gsub("_deduplicated_sample.csv", "", basename(.x)),
+  Sample_Group = gsub("Tumour", "Tumor", Sample_Group)))
+
 ```
 
 
 ```{r load methylation}
 #filter sample with better methylation detection
-pvalue_filter <- fread(clinical_csv) %>%
-  left_join(fread(beta_p_value) %>%
-              `colnames<-`(c("Sample_Name", "failed_CpG_fraction"))) %>%
-  filter(Sample_Group == "Primary Tumour") %>%
-  mutate(Patient.ID = substr(Sample.ID, 1,8)) %>%
-  dplyr::select(Patient.ID, Sample_Name, Sample.ID, failed_CpG_fraction) %>%
-  group_by(Patient.ID) %>%
-  filter(failed_CpG_fraction== max(failed_CpG_fraction)) %>%
-  ungroup()
+pd <- fread(clinical_csv) 
+pvalue_filter <- pd %>%
+  filter(Sample_Group == "Primary Tumour", Sample.ID %in% Deduplicated_beta$Sample.ID) %>%
+  mutate(Patient.ID = substr(Sample.ID, 1,8)) 
 
 
 purity <- fread(purity_csv) %>%
@@ -43,11 +44,19 @@ purity <- fread(purity_csv) %>%
   dplyr::select(Sample.ID, Sample_Name, purity) 
 
 #load beta and apply filter
-beta_matrix <- fread(beta_file) 
-colnames(beta_matrix) <- unlist(lapply(colnames(beta_matrix), function(x) unlist(strsplit(x, split = "_"))[1]))
+beta_matrix <- fread(beta_file) %>%
+  column_to_rownames("V1") %>%
+  as.matrix()
 
- beta_matrix <-  beta_matrix %>% 
-   dplyr::select("V1", pvalue_filter$Sample_Name)
+
+beta_norm_corr <- champ.runCombat(beta = beta_matrix, pd = pd, batchname = c("Sentrix_Position"))
+
+colnames(beta_norm_corr) <- unlist(lapply(colnames(beta_norm_corr), function(x) unlist(strsplit(x, split = "_"))[1]))
+
+
+beta_matrix <-  data.frame(beta_norm_corr) %>% 
+   dplyr::select( pvalue_filter$Sample_Name) %>%
+  rownames_to_column("V1")
 
 ```
 
@@ -198,19 +207,22 @@ age_correlation <- indS_clipped%>%
   mutate(Patient.ID= substr(Sample.ID,1, 8)) %>%
     left_join(fread(demographic_csv) %>%
                 mutate(Patient.ID =gsub("-","_",submitted_donor_id))%>%
-                dplyr::select(Patient.ID, age = donor_age_at_diagnosis))
+                dplyr::select(Patient.ID, age = donor_age_at_diagnosis))%>%
+  ungroup()
 
 
 fitted_models = age_correlation%>%
   group_by(CpG) %>%
   group_map(~ lm(beta ~age, data =.x))
 
+
 age_correlation_p <-lapply(fitted_models, function(x) summary(x)$coefficients[,4][2])
 
-#number of probes that is likely to be age correlated
-print(paste0("probes that have correlation p-value with age <0.05, number:",sum(age_correlation_p<0.05)))
 #list of probes
-age_correlated_cpg <- age_correlation[which(age_correlation_p<0.05), "CpG"]
+age_correlated_cpg <- unique(age_correlation[which(age_correlation_p<=0.05), "CpG"])
+                             
+#number of probes that is likely to be age correlated
+print(paste0("probes that have correlation p-value with age <=0.05, number:",length(age_correlated_cpg)))
 
 indS_clipped_age_filtered <- indS_clipped[!names(indS_clipped) %in% age_correlated_cpg]
 print(paste0("pre-filter number of CpG: ", length(indS_clipped)))
@@ -321,6 +333,7 @@ def get_consensus_matrix_clustering(meth_data_pc,cancer_to_keep,triple_cluster_c
                 consensus_matrix[cancer] = pd.concat([consensus_matrix[cancer],agglomerative_clustering_pc[cancer]],axis=1)
     return consensus_matrix, affinity_matrix
 
+
 consensus_matrix_spectral, affinity_matrix = get_consensus_matrix_clustering(new_meth_data_pc, ["OV"], [],1,"NN")
 
 consensus_clustering_spectral = {}
@@ -368,6 +381,7 @@ def get_sign_kw_louvain(meth_data_pc, cancer_to_keep, consensus_clustering):
         sign_pos=[meth_data_pc[cancer].columns[i] for i in ind_sign]
         pd.DataFrame(sign_pos).to_csv(os.path.join(sign_cpg_dir,cancer+"_sign_cpg_spectral.csv"))
     return kw
+
 
 kw_snf = get_sign_kw_louvain(new_meth_data_pc, ["OV"], consensus_clustering_spectral)
 
