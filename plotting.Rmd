@@ -539,7 +539,7 @@ ov_hrdetect <- fread("tables/hrdetect.tsv") %>%
   dplyr::rename(Sample.ID = Tumor_Sample) %>%
   mutate(Sample.ID = gsub("-", "_", Sample.ID)) %>%
   right_join(hrd_score_icgc) %>%
-  filter(Sample.ID %in% unique(beta_sub_meth[which(beta_sub_meth$Sample_Group =="Primary Tumor" &Project == "OV"), Sample.ID])) %>%
+  filter(Sample.ID %in% unique(beta_sub_meth[which(beta_sub_meth$Sample_Group =="Primary Tumor" & beta_sub_meth$Project == "OV"), "Sample.ID"])) %>%
   mutate(Donor.ID = substr(Sample.ID, 1, 8))  %>%
   distinct()
 
@@ -1197,27 +1197,32 @@ ggsave("plots/Supplementary/Sup6_cimpvsEBV_stad.pdf", device = "pdf", height = 4
 
 ```
 
-#Supplementary plot 9 - HRD predictors
+#Supplementary plot 7 - mutation burden
 ```{r}
-stat.test <- hrd_plot_df %>%
-  group_by(Project, Methylation, Predictor, .keep = T) %>%
-  filter(n() >2, !is.na(value)) %>%
-  ungroup() %>%
-  compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
-  left_join(hrd_plot_df %>%
-              group_by(Project,  Predictor, .keep = T) %>%
+stat.test <-mutation_burden %>%
+  mutate(Methylation = factor(Methylation, levels = methylation_lvl),
+         Project = factor(Project, levels = project_lvl),
+         parameter_name = gsub("_", " ", parameter_name)) %>%
+  filter(!is.na(value)) %>%
+  group_by(parameter_name, .keep = T) %>%
+  compare_means(value ~ Methylation, data =., group.by = c("Project", "parameter_name"), ref.group = "No")  %>%
+  left_join(mutation_burden %>%
+              group_by(Project, parameter_name, .keep = T) %>%
               summarise(y.position = max(value)) %>%
               ungroup() %>%
-              dplyr::select(Project, Predictor, y.position)) %>%
+              dplyr::select(Project, parameter_name, y.position)) %>%
   mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
-  group_by(Project, Predictor) %>%
-  mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- y.position)/n()*row_number()))   %>%
+  group_by(Project, parameter_name) %>%
+  mutate(y.position = case_when(parameter_name == "TMB nonsilent" ~ 100 + 5*row_number(),
+                               parameter_name == "MSI Score"~ 35 + 5*row_number(),
+                               parameter_name == "Aneuploidy Score"~ 30 + 5*row_number(),))   %>%
   ungroup() 
 
   
 mutation_burden_plot <- mutation_burden %>%
   mutate(Methylation = factor(Methylation, levels = methylation_lvl),
-         Project = factor(Project, levels = project_lvl)) %>%
+         Project = factor(Project, levels = project_lvl),
+         parameter_name = gsub("_", " ", parameter_name)) %>%
   group_by(parameter_name, .keep = T) %>%
   group_map(~ ggplot(.x, aes(x = Methylation, y = value, color =Methylation))+
   geom_boxplot(outlier.shape = NA, data = . %>% ungroup()%>% group_by(Project, Methylation, .keep = T) %>%
@@ -1227,23 +1232,37 @@ mutation_burden_plot <- mutation_burden %>%
   rotate_x_text(angle = 60)+
   scale_color_manual(values= methylation_color, limits = force)+
   theme(legend.position = "none")+
-  scale_y_continuous(name =gsub("_"," ",.y)) +
   facet_grid(cols = vars(Project), scales = "free", space = "free"), keep = T)
 
 ggarrange(
    mutation_burden_plot[[3]]+
+     stat_pvalue_manual(data = stat.test%>%
+                          filter(parameter_name == "TMB nonsilent"), xmin ="group1", xmax = "group2",
+    y.position = "y.position", label = "p.adj" )+
+     ylim(c(0, 120))+
      theme(legend.position = "none", strip.text.y = element_blank(),
         axis.title.x = element_blank(), axis.text.x = element_blank(), 
         axis.ticks.x = element_blank(), plot.margin = margin(0.5,0.5,0,0.5, "lines"), panel.spacing = unit(0,"null"),
         axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black"))+
      scale_y_log10("log10(TMB non-silent)") ,
   mutation_burden_plot[[2]]+
+         stat_pvalue_manual(data = stat.test%>%
+                          filter(parameter_name == "MSI Score"), xmin ="group1", xmax = "group2",
+    y.position = "y.position", label = "p.adj" )+
+    ylab("MSI Score")+
+    ylim(c(0, 52))+
     geom_hline(yintercept = 3.5, linetype = "dotted")+
-  theme(legend.position = "none", strip.text = element_blank(),
+  theme( strip.text = element_blank(),
         axis.title.x = element_blank(), axis.text.x = element_blank(), 
         axis.ticks.x = element_blank(), plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"),
         axis.text.y = element_text(hjust=1.2),strip.background = element_rect(fill = "white", colour = "black")),
-  mutation_burden_plot[[1]]+theme(legend.position = "none", strip.text = element_blank(),
+  mutation_burden_plot[[1]]+
+    ylab("Aneuploidy Score")+
+    ylim(c(0, 50))+
+    stat_pvalue_manual(data = stat.test%>%
+                          filter(parameter_name == "Aneuploidy Score"), xmin ="group1", xmax = "group2",
+    y.position = "y.position", label = "p.adj" )+
+    theme(legend.position = "none", strip.text = element_blank(),
                  strip.background = element_blank(),
                  plot.margin = margin(0,0,0,0, "lines"), panel.spacing = unit(0,"null"))
   ,nrow = 3, align = "v")
@@ -1735,6 +1754,10 @@ pdf("plots/Main_Figure_4_oncoprint_methylated.pdf", height = 8.3,width = 15)
 
 draw(onco, annotation_legend_side = "bottom", heatmap_legend_side = "bottom", merge_legend = TRUE)
 dev.off()
+
+
+
+
 ```
 #Main figure5
 ```{r}
@@ -1754,6 +1777,22 @@ hrd_plot_df <- hrd_predictors   %>%
           project_number = as.integer(Project))%>%
   # filter(!is.na(Sig3) | !is.na(Sig8)) %>%
   pivot_longer(cols = c(Sig3, HRD_Score), names_to = "Predictor", values_to = "value")
+
+stat.test <- hrd_plot_df %>%
+  group_by(Project, Methylation, Predictor, .keep = T) %>%
+  filter(n() >2, !is.na(value)) %>%
+  ungroup() %>%
+  compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
+  left_join(hrd_plot_df %>%
+              group_by(Project,  Predictor, .keep = T) %>%
+              summarise(y.position = max(value)) %>%
+              ungroup() %>%
+              dplyr::select(Project, Predictor, y.position)) %>%
+  mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
+  group_by(Project, Predictor) %>%
+  mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- y.position)/n()*row_number()))   %>%
+  ungroup() 
+
 sig_plot <- hrd_plot_df %>%
   ungroup() %>%
   filter(Predictor == "Sig3")  %>%
@@ -1771,20 +1810,7 @@ sig_plot <- hrd_plot_df %>%
     stat_pvalue_manual(stat.test%>%
   filter(Predictor == "Sig3"), label = "p.adj", tip.length = 0)
 
-stat.test <- hrd_plot_df %>%
-  group_by(Project, Methylation, Predictor, .keep = T) %>%
-  filter(n() >2, !is.na(value)) %>%
-  ungroup() %>%
-  compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
-  left_join(hrd_plot_df %>%
-              group_by(Project,  Predictor, .keep = T) %>%
-              summarise(y.position = max(value)) %>%
-              ungroup() %>%
-              dplyr::select(Project, Predictor, y.position)) %>%
-  mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
-  group_by(Project, Predictor) %>%
-  mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- y.position)/n()*row_number()))   %>%
-  ungroup() 
+
 
 
 hrd_plot <- hrd_plot_df %>%
@@ -1874,61 +1900,46 @@ HRD_onco <- beta_sub_meth_t%>%
            project_number = as.numeric(Project)) %>%
   distinct() %>%
   arrange(Project, Methylation, -HRD_Score) %>%
-  mutate(number = row_number()) %>%
+  mutate(number = row_number()) 
+
+
+HRD_onco_mat <- HRD_onco%>%
   t()
 
 
-colnames(HRD_onco) <- HRD_onco["Sample.ID_original",]
+colnames(HRD_onco_mat) <- unlist(HRD_onco$"Sample.ID_original")
 
 HRD_color <- colorRamp2(breaks = c(0, 42, 100), colors = c("#AEB6E5", "white", "#A93154"))
 prom_meth_color <- colorRamp2(breaks = c(0, 0.5, 1), colors = c("#5D3A9B", "white", "#E66100"))
 avg_corr_meth_color <- colorRamp2(breaks = c(0, 0.5, 1), colors = c("#0C7BDC", "white", "#FFC20A"))
 signature_color <- colorRamp2(breaks = c(0,0.1, 1), colors = c("white","#F1F1F1", "#26A63A"))
-# HRD_onco_plot <- oncoPrint(HRD_onco[c("TP53", "BRCA1", "BRCA2", "RAD51C", "BRIP1", "PALB2"),],
-#   alter_fun = alter_fun,
-#   show_pct = FALSE,
-#   row_names_side = "left",
-# top_annotation =HeatmapAnnotation(
-#     Project = anno_block(labels= c("OV","STAD","LGG","BC", "UCEC", "COAD", "LUSC", "HNSC"),labels_gp = gpar(fontsize = 10)),
-#      Methylation = HRD_onco["Methylation",], 
-#     `Promoter Methylation` = as.numeric(HRD_onco["avg_meth",]),
-#     `Corrected Methylation` = as.numeric(HRD_onco["avg_corr_meth",]),
-#     `HRD Score` = as.numeric(HRD_onco["HRD_Score",]),
-#     `Signature 3` = as.numeric(HRD_onco["Sig3",]),
-#     col = list(Methylation = methylation_color_ht, `HRD Score` = HRD_color,`Promoter Methylation` =  prom_meth_color, `Corrected Methylation` = avg_corr_meth_color,
-#                `Signature 3` = signature_color),
-#      gp = gpar(col = "white"),
-#     simple_anno_size = unit(1.5, "cm"),
-#     annotation_legend_param = list(`HRD Score` = list(at = c(0, 42, 100), labels =c(0, 42, 100)),
-#                                    `Corrected Methylation`= list(at = c(0, 0.5, 1), labels =c(0, 0.5, 1)),
-#                                    `Signature 3` = list(at = c(0, 0.1, 1), labels =c(0, 0.1, 1))),
-#     annotation_name_gp = gpar(fontsize= 10), annotation_name_side = "left"),
-#     column_title = NULL, column_order = as.numeric(HRD_onco["number",]),
-#   column_split = HRD_onco["project_number",],
-#   heatmap_legend_param = list(direction = "horizontal",title = "Gene Modification"))
+Purity = colorRamp2(breaks = c(0, 0.5, 1), colors = c("white", "grey", "black"))
+ `CN` =colorRamp2(breaks = c(0, 2, 8), colors = c("#4D7C93", "white", "#CC5C3E"))
 
 
-HRD_onco_plot <- oncoPrint(HRD_onco[c("TP53", "BRCA1", "BRCA2", "RAD51C", "BRIP1", "PALB2"),],
+HRD_onco_plot <- oncoPrint(HRD_onco_mat[c("TP53", "BRCA1", "BRCA2", "RAD51C", "BRIP1", "PALB2"),],
   alter_fun = alter_fun,
   show_pct = FALSE,
   row_names_side = "left",
 top_annotation =HeatmapAnnotation(
     Project = anno_block(labels= c("OV","STAD","LGG","BC", "UCEC", "COAD", "LUSC", "HNSC"),labels_gp = gpar(fontsize = 10)),
-     Methylation = HRD_onco["Methylation",], 
-    `Avg Meth` = anno_points(apply((matrix(HRD_onco[c("avg_meth","avg_corr_meth"),],nc =2, byrow = T)),2, as.numeric), pch = c(21,3), gp = gpar(col = c("#E69F00","#0072B2")),show_annotation_name = F),
-    `HRD Score` = as.numeric(HRD_onco["HRD_Score",]),
-    `Signature 3` = as.numeric(HRD_onco["Sig3",]),
+     Methylation = HRD_onco_mat["Methylation",], 
+    Purity = as.numeric(HRD_onco_mat["purity",]),
+    `Copy Number\n(gene)` = as.numeric(HRD_onco_mat["CN",]),
+    `Avg Meth` = anno_points(apply((matrix(HRD_onco_mat[c("avg_meth","avg_corr_meth"),],nc =2, byrow = T)),2, as.numeric), pch = c(21,3), gp = gpar(col = c("#E69F00","#0072B2")),show_annotation_name = F),
+    `HRD Score` = as.numeric(HRD_onco_mat["HRD_Score",]),
+    `Signature 3` = as.numeric(HRD_onco_mat["Sig3",]),
     annotation_name_rot = 0,
     annotation_name_gp = gpar(fontsize= 10),
     annotation_name_side = "left",
     col = list(Methylation = methylation_color_ht, `HRD Score` = HRD_color,
-               `Signature 3` = signature_color),
+               `Signature 3` = signature_color, `Copy Number\n(gene)` = CN, Purity = Purity),
      gp = gpar(col = "white"),
     simple_anno_size = unit(1.5, "cm"),
     annotation_legend_param = list(`HRD Score` = list(at = c(0, 42, 100), labels =c(0, 42, 100)),
                                    `Signature 3` = list(at = c(0, 0.1, 1), labels =c(0, 0.1, 1)))),
-    column_title = NULL, column_order = as.numeric(HRD_onco["number",]),
-  column_split = HRD_onco["project_number",],
+    column_title = NULL, column_order = as.numeric(HRD_onco_mat["number",]),
+  column_split = HRD_onco_mat["project_number",],
   heatmap_legend_param = list(direction = "horizontal",title = "Gene Modification"))
 
 
