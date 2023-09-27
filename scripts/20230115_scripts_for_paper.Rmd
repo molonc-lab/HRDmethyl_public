@@ -59,10 +59,12 @@ hr_gene_list <- c("BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D
 #load files
 ```{r load beta}
 #beta value for BRCA1 AND RAD51C
-beta_sub <- map_dfr(Sys.glob("/working/lab_nicw/lijunX/20220*_meth/*_beta_subset_promo.csv"), ~ as.data.frame(data.table::fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character")))) %>%
+beta_sub <- map_dfr(Sys.glob("/working/lab_olgak/lijunX/HRDmethyl_public/data/processed/methylation/*_beta_subset_promo.csv"), ~ as.data.frame(data.table::fread(.x, header = T, na.strings = "", fill = T,  colClasses = c("Sentrix_ID"= "character")))) %>%
   filter(startsWith(Project, "TCGA")| startsWith(Project, "ICGC")) %>%
-  dplyr::select(-c("Sample_Plate","Pool_ID", "Sample_Well", "Sentrix_ID","Sentrix_Position","Assay_ID" ))
+  dplyr::select(-c("Sample_Plate","Pool_ID", "Sample_Well", "Sentrix_ID","Sentrix_Position"))
 
+
+  
 #annotate purity
 ip_purity <- map_dfr(Sys.glob("../2022*_meth/*_ip_purity.csv"), ~as.data.frame(data.table::fread(.x, header = T, na.strings = "", fill = T, ,  colClasses = c("Tumor_Sample_Barcode"= "character"))))
 
@@ -126,31 +128,53 @@ beta_sub <- beta_sub %>%
 
 ```{r load mRNA}
 #tcga mRNA
-mRNA_sample <- map_dfr(Sys.glob("../20220401_TCGA_*_meth/mRNA/TCGA_*_mRNA_sample.tsv"), ~as.data.frame(data.table::fread(.x, header =T, na.string="", fill = T, check.names = T, sep = "\t"), row.names = 1))%>%
-  mutate(File.Name = gsub("-",".",gsub(".rna_seq.augmented_star_gene_counts.tsv", "",File.Name))) %>%
+mRNA_sample <- map_dfr(Sys.glob("../data/raw/*_*_meth/mRNA/TCGA_*_mRNA_sample.tsv"), ~as.data.frame(data.table::fread(.x, header =T, na.string="", fill = T, check.names = T, sep = "\t"), row.names = 1))%>%
+  mutate(File.Name = gsub("-",".",gsub(".rna_seq.augmented_star_gene_counts.tsv", "",basename(File.Name)))) %>%
   mutate(Sample.ID = substr(Sample.ID, 1, 15))
 
-mRNA <- map_dfr(Sys.glob("../20220401_TCGA_*meth/TCGA_*_mRNA_edgeR.csv"), ~as.data.frame(t(data.frame(data.table::fread(.x, header = T, na.string = "", fill = T), row.names = 1))))%>%
+mRNA <- map_dfr(Sys.glob("../data/processed/mRNA/*_mRNA_edgeR.csv"), ~as.data.frame(t(data.frame(data.table::fread(.x, header = T, na.string = "", fill = T), row.names = 1))))%>%
   mutate(File.Name = gsub(".rna_seq.augmented_star_gene_counts.tsv", "", gsub("^X", "", rownames(.))))%>%
   left_join(mRNA_sample, by = "File.Name")
-
-#icgc mRNA
-icgc_mRNA_sample <- as.data.frame(fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/ICGC_OV_mRNA_sample.csv"))
-icgc_mRNA <- as.data.frame(t(data.frame(fread("/working/lab_nicw/lijunX/20220505_ICGC_OV_meth/ICGC_OV_mRNA_edgeR.csv", header = T, na.string = "", fill = T), row.names = 1))) %>%
-  mutate(filename = rownames(.)) %>%
-  separate(col = filename, into = c("ICGC","AOCS"), sep = "_") %>%
-  mutate(Sample.ID = gsub("\\.", "-", substr(AOCS, 1, 8)),
-         sampleLabel = gsub("\\.", "-",ICGC)) %>%
-  left_join(icgc_mRNA_sample, by = c("Sample.ID" ="donorLabel", "sampleLabel")) %>%
-  mutate(Sample_Group = case_when(SampleType == "Primary tumour" ~ "Primary Tumor",
-                                SampleType == "Normal control (other site)" ~ "Solid Tissue Normal",
-                                TRUE ~ SampleType)) %>%
-  mutate(Sample.ID = gsub("-","_",Sample.ID))
 
 mRNA %>% mutate(Sample.ID = substr(Sample.ID, 1, 15)) %>%
   group_by(Sample.ID) %>%
   summarise(n = n()) %>%
   filter(n >1)
+
+
+ucec_xrcc3 <- beta_sub %>%
+  filter(gene == "XRCC3", Sample_Group %in% c("Solid Tissue Normal", "Primary Tumor"), Project == "TCGA_UCEC") %>%
+  mutate(Case.ID = substr(Sample.ID, 1, 12),
+         CpG = factor(CpG, levels = unique(beta_sub$CpG[order(beta_sub$chr_start)]))) %>%
+  mutate(Sample.ID = substr(Sample.ID, 1,15)) %>%
+  left_join(mRNA %>%
+              dplyr::select(XRCC3 = ENSG00000126215.14, Sample.ID)) %>%
+  filter(!is.na(XRCC3)) %>%
+  group_by(Case.ID) %>%
+  filter(n_distinct(Sample_Group) >1) %>%
+  ungroup()
+
+ucec_xrcc3 %>%
+  ggplot(aes(x = CpG, y = beta, group = Sample_Name, color = XRCC3))+
+  geom_point()+
+  geom_line()+
+  scale_color_continuous(type = "viridis", "XRCC3 mRNA expression")+
+  facet_wrap( ~ Case.ID, ncol = 3)+
+  theme_bw()+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "bottom")
+
+ggsave("../plots/XRCC3_mRNA_CpG_expression_assessment.pdf", width = 210, height = 297, units = "mm")
+
+ucec_xrcc3 %>%
+  ggplot(aes(x = beta, y = XRCC3, color = Case.ID, group = Case.ID))+
+  geom_point()+
+  geom_line()+
+  facet_wrap( ~ CpG)+
+  theme_bw()+
+  theme(legend.position = "none")
 
 ```
 

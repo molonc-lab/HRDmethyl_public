@@ -15,11 +15,11 @@ library(ChAMP)
 
 ```{r}
 hm450_annotation = "../data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz"
-beta_file = "../data/processed/methylation/ICGC_OV_meth_norm_beta.csv"
-beta_p_value = "../data/processed/methylation/ICGC_OV_beta_pvalue.csv"
-clinical_csv = "../data/raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"
-purity_csv = "../data/processed/ICGC_OV_purity.csv"
-demographic_csv = "../data/supporting/Patch_2015_ICGC_donor.tsv"
+beta_file = "../data/processed/methylation/TCGA_TGCT_meth_norm_beta.csv"
+beta_p_value = "../data/processed/methylation/TCGA_TGCT_beta_pvalue.csv"
+clinical_csv = "../data/raw/20220401_TCGA_TGCT_meth/IDAT/TCGA_TGCT_pd.csv"
+purity_csv = "../data/processed/TCGA_ABSOLUTE_purity.txt"
+demographic_csv = "../data/raw/20220401_TCGA_TGCT_meth/tgct_clinical.tsv"
 Deduplicated_beta <- map_dfr(Sys.glob("../data/processed/methylation/*deduplicated_sample.csv"),
                              ~ fread(.x, header = T, na.strings = "", fill = T) %>%
   mutate(Project = gsub("_deduplicated_sample.csv", "", basename(.x)),
@@ -32,15 +32,16 @@ Deduplicated_beta <- map_dfr(Sys.glob("../data/processed/methylation/*deduplicat
 #filter sample with better methylation detection
 pd <- fread(clinical_csv) 
 pvalue_filter <- pd %>%
-  filter(Sample_Group == "Primary Tumour", Sample.ID %in% Deduplicated_beta$Sample.ID) %>%
-  mutate(Patient.ID = substr(Sample.ID, 1,8)) 
+  filter(Sample_Group == "Primary Tumor", Sample.ID %in% Deduplicated_beta$Sample.ID) %>%
+  mutate(Patient.ID = substr(Sample.ID, 1,15)) 
 
 
 purity <- fread(purity_csv) %>%
-  `colnames<-`(c("Sample.ID", "purity")) %>%
-    mutate(Sample.ID = gsub("-", "_", Sample.ID)) %>%
+  mutate(Sample.ID = substr(sample, 1, 16)) %>%
+  dplyr::select(Sample.ID, purity) %>%
   right_join(fread(clinical_csv) %>%
-              filter(Sample_Group %in% c("Primary Tumour", "Ascites"))) %>%
+              filter(Sample_Group == "Primary Tumor") %>%
+               dplyr::select(Sample.ID, Sample_Name)) %>%
   dplyr::select(Sample.ID, Sample_Name, purity) 
 
 #load beta and apply filter
@@ -48,36 +49,12 @@ beta_matrix <- fread(beta_file) %>%
   column_to_rownames("V1") %>%
   as.matrix()
 
-#pca
-library(plotly)
-library(stats)
-prin_com <-prcomp(t(beta_matrix))
-explained_variance_ratio <- summary(prin_com)[["importance"]]['Proportion of Variance',]
-explained_variance_ratio <- 100 * explained_variance_ratio
-components <- prin_com[["x"]]
-components <- data.frame(components)
-components$PC3 <- -components$PC3
-components$PC2 <- -components$PC2
 
+#beta_norm_corr <- champ.runCombat(beta = beta_matrix, pd = pd, batchname = c("Sentrix_Position"))
 
-colnames(components) <- paste(colnames(components),explained_variance_ratio, sep = " ")
-components %>%
-  rownames_to_column("Sample_Name") %>%
-  separate(col = "Sample_Name", sep = "_", into = c("Sample_Name","A","B")) %>%
-  left_join(pd %>%
-              dplyr::select(Sample_Name, Sentrix_ID, Sample_Group)) %>%
-  mutate(Sentrix_ID = as.character(Sentrix_ID)) %>%
-ggplot(aes(x= !!sym(colnames(components)[[2]]), y = !!sym(colnames(components)[[3]]), color = Sample_Group))+
-  geom_point()
+beta_matrix <- beta_matrix[,pvalue_filter$Sample_Name] 
 
-
-#NO need to COMBAT
-# beta_norm_corr <- champ.runCombat(beta = beta_matrix, pd = pd, batchname = c("Sentrix_Position"))
-
-
-colnames(beta_matrix) <- unlist(lapply(colnames(beta_matrix), function(x) unlist(strsplit(x, split = "_"))[1]))
-beta_matrix <-  data.frame(beta_matrix) %>% 
-   dplyr::select( pvalue_filter$Sample_Name) %>%
+beta_matrix <- data.frame(beta_matrix, check.names = F) %>%
   rownames_to_column("V1")
 
 ```
@@ -207,7 +184,7 @@ adjusted_CpG <- indS_clipped%>%
   group_by(CpG) %>%
   summarise(sdv = sd(beta)) %>%
   left_join(filter_variable_cgi %>%
-              filter(cluster == 2) %>%
+              filter(cluster == 1) %>%
               dplyr::select(CpG = V1, pre_adjusted_sd = SD))
 
 
@@ -227,10 +204,10 @@ age_correlation <- indS_clipped%>%
   dplyr::rename(Sample_Name = Sample.ID) %>%
   left_join(fread(clinical_csv) %>%
               dplyr::select(Sample.ID, Sample_Name)) %>%
-  mutate(Patient.ID= substr(Sample.ID,1, 8)) %>%
+  mutate(Patient.ID= substr(Sample.ID,1, 12)) %>%
     left_join(fread(demographic_csv) %>%
-                mutate(Patient.ID =gsub("-","_",submitted_donor_id))%>%
-                dplyr::select(Patient.ID, age = donor_age_at_diagnosis))%>%
+                mutate(Patient.ID =case_submitter_id )%>%
+                dplyr::select(Patient.ID, age = age_at_index))%>%
   ungroup()
 
 
@@ -253,7 +230,7 @@ print(paste0("post-filter number of CpG: ",length(indS_clipped_age_filtered)))
 
 
 
-write.csv(indS_clipped_age_filtered, "../data/processed/methylation_clustering/preprocessed_beta_matrix_for_clustering.csv", row.names = T)
+write.csv(indS_clipped_age_filtered, "../data/processed/methylation_clustering/TGCT_preprocessed_beta_matrix_for_clustering.csv", row.names = T)
 ```
 
 
@@ -267,7 +244,7 @@ filter_list <- as.data.frame(fread(paste0("gunzip -cq ",hm450_annotation ))) %>%
   filter(!is.na(filter)) %>%
   dplyr::select(probeID, filter)
 
-write.csv(filter_list, "../data/processed/methylation_clustering/OV_filtered_probes.csv", row.names = F, quote = F)
+write.csv(filter_list, "../data/processed/methylation_clustering/TCGT_filtered_probes", row.names = F, quote = F)
 ```
 
 This chunk is from https://github.com/BoevaLab/CIMP_etiology_oncogenic_transformation/blob/main/Deciphering_CIMP_Analysis.ipynb
@@ -312,10 +289,10 @@ import umap
 from netneurotools import cluster
 
 cancer_to_keep = []
-cancer_to_keep = ["OV"]
+cancer_to_keep = ["TGCT"]
 
 meth_data_pc = []
-meth_data_pc =pd.read_csv("data/processed/methylation_clustering/preprocessed_beta_matrix_for_clustering.csv", index_col=0)
+meth_data_pc =pd.read_csv("data/processed/methylation_clustering/TGCT_preprocessed_beta_matrix_for_clustering.csv", index_col=0)
 
 std_sc_data = []
 std_sc = StandardScaler()
@@ -326,7 +303,7 @@ umap_red_data= []
 umap_red_data = reducer.fit_transform(std_sc_data)
 
 new_meth_data_pc = {}
-new_meth_data_pc["OV"] =  meth_data_pc
+new_meth_data_pc["TGCT"] =  meth_data_pc
 
 def get_consensus_matrix_clustering(meth_data_pc,cancer_to_keep,triple_cluster_cancers,n_runs,kernel):
 #     Parameters: meth_data_pc (dict): keys are cancer types, values are pd.DataFrame (n_pat,n_cpg) (rows=patients,columns=cpg)
@@ -371,7 +348,7 @@ def get_consensus_matrix_clustering(meth_data_pc,cancer_to_keep,triple_cluster_c
     return consensus_matrix, affinity_matrix
 
 
-consensus_matrix_spectral, affinity_matrix = get_consensus_matrix_clustering(new_meth_data_pc, ["OV"], [],1,"NN")
+consensus_matrix_spectral, affinity_matrix = get_consensus_matrix_clustering(new_meth_data_pc, ["TGCT"], [],1,"NN")
 
 consensus_clustering_spectral = {}
 cluster_memb_dir = "data/processed/methylation_clustering"
@@ -420,7 +397,7 @@ def get_sign_kw_louvain(meth_data_pc, cancer_to_keep, consensus_clustering):
     return kw
 
 
-kw_snf = get_sign_kw_louvain(new_meth_data_pc, ["OV"], consensus_clustering_spectral)
+kw_snf = get_sign_kw_louvain(new_meth_data_pc, ["TGCT"], consensus_clustering_spectral)
 
 sign_pos_spectral = {}
 for cancer in cancer_to_keep:

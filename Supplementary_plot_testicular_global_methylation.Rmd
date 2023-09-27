@@ -1,5 +1,5 @@
 ---
-title: "Supplementary_ovarian_global_methylation"
+title: "Supplementary_testicular_global_methylation"
 author: "lijunx"
 date: "June 9, 2023"
 output: html_document
@@ -24,19 +24,38 @@ source("scripts/mRNA_edgeR_support.R")
 
 ```
 ```{r load files}
-beta_norm <- fread("data/processed/methylation/ICGC_OV_beta_subset_promo.csv")
+beta_norm <- fread("data/processed/methylation/TCGA_TGCT_beta_subset_promo.csv")
 hm450_annotation = "data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz"
-beta_file = "data/processed/methylation/ICGC_OV_meth_norm_beta.csv"
-brca1_rad51c_sub_beta_file = "data/processed/methylation/ICGC_OV_beta_subset_promo.csv"
-clinical_csv = "data/raw/20220505_ICGC_OV_meth/IDAT/ICGC_OV_pd.csv"
-cluster_group_file = "data/processed/methylation_clustering/OV_cluster_memb_new.csv"
+beta_file = "data/processed/methylation/TCGA_TGCT_meth_norm_beta.csv"
+brca1_rad51c_sub_beta_file = "data/processed/methylation/TCGA_TGCT_beta_subset_promo.csv"
+clinical_csv = "data/raw/20220401_TCGA_TGCT_meth/IDAT/TCGA_TGCT_pd.csv"
+cluster_group_file = "data/processed/methylation_clustering/TGCT_cluster_memb_new.csv"
 methylation_status <- "data/processed/TCGA_ICGC_methylation_list.tsv"
-indS_clipped_age_filtered <- as.data.frame(fread("data/processed/methylation_clustering/preprocessed_beta_matrix_for_clustering.csv", header = T)) %>%
+indS_clipped_age_filtered <- as.data.frame(fread("data/processed/methylation_clustering/TGCT_preprocessed_beta_matrix_for_clustering.csv", header = T)) %>%
   column_to_rownames("V1")
 
-methylation_status <-fread(methylation_status) %>%
-  filter(startsWith( Sample.ID,"AOCS")) %>%
-  mutate(Patient.ID = substr(Sample.ID, 1, 8))
+
+beta_sub <- beta_norm%>%
+    filter(Project == "TCGA_TGCT") %>%
+    dplyr::select(-c("Sample_Plate","Pool_ID", "Sample_Well", "Sentrix_ID","Sentrix_Position")) %>%
+    mutate(Project = gsub("TCGA_", "", Project)) %>%
+  distinct()
+
+beta_sub_meth <- BRCA1_RAD51C_meth_annotat(beta_sub)%>%
+  filter(Sample_Group =="Primary Tumor", Sample_Name %in% Deduplicated_beta$Sample_Name) %>%
+  pivot_longer(cols=c("BRCA1_M", "RAD51C_M"), values_to = "Methylation", names_to = "gene2") %>%
+  mutate(gene2 = gsub("_M","", gene2)) %>%
+  filter(gene == gene2) %>%
+  dplyr::select(-c("gene2"))%>%
+  dplyr::select(gene, Project, Methylation, Sample.ID) %>%
+  distinct() %>%
+  mutate(Methylation = if_else(Methylation == "No", Methylation, gene)) %>%
+  dplyr::select(-gene) %>%
+  distinct() %>%
+  group_by(Sample.ID) %>%
+  filter(n_distinct(Methylation) == 1 | Methylation != "No") %>%
+  mutate(Methylation = paste(Methylation, collapse = " & "))
+  
 
 
 Deduplicated_beta <- map_dfr(Sys.glob("data/processed/methylation/*deduplicated_sample.csv"),
@@ -52,34 +71,14 @@ cluster <- fread(cluster_group_file) %>%
               dplyr::select(Sample.ID = index, cluster)
 
 
-icgc_tmb <- fread("data/processed/tmb_icgc.csv") %>%
-             ungroup() %>%
-             mutate(Sample.ID = gsub("-", "_", paste(id_1, id_2, sep = "-")))
-
-icgc_msi <- Sys.glob("data/processed/msi_icgc/AOCS-[0-9]*") %>%
-  map_dfr(~ as.data.frame(fread(.x) )%>%
-            mutate(Sample.ID = basename(.x))) %>%
-  dplyr::select(Sample.ID, icgc_MSI_Score = `%`) %>%
-             mutate(Sample.ID = gsub("-", "_",Sample.ID))
 
 
 # purity
-purity_file= "data/processed/ICGC_OV_purity.csv"
+purity_file= "data/processed/TCGA_ABSOLUTE_purity.txt"
 
 # copy number 
-copy_number_file = "data/processed/copynumber/ICGC_OV_BRCA1_RAD51C_cnv.tsv"
+copy_number_file = "data/processed/copynumber/TCGA_TGCT_BRCA1_RAD51C_cnv.tsv"
 
-# mutation
-mutation_profile = "data/supporting/nature14410-Supplementary_Table_4.xlsx"
-
-#HRDetect
-icgc_hrdetect <- fread("tables/hrdetect.tsv") %>%
-  mutate(Sample.ID = gsub("-","_", Tumor_Sample)) %>%
-  dplyr::select(-Tumor_Sample)
-
-
-ov_groups <-read_excel("data/supporting/nature14410-Supplementary Table 13.xlsx", sheet = 2, skip = 2) %>%
-  dplyr::select(SampleID, group = `HRD/CCNE1/WT Group`)
 
 col = list(alt = c("MUT" = "#EE8A8A", "Conseq" = "#616161", "NA" = "white"),
              Methylation = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "white"),
@@ -133,10 +132,8 @@ cluster_python <- fread(cluster_group_file) %>%
 cpg_scaled <- scale(indS_clipped_age_filtered)
 
 dis = daisy(cpg_scaled)
-pdf("plots/Supplementary/Sup8b_silhouette.pdf")
 plot(silhouette(cluster_python$cluster, dis),col=c("#457B9D", "#E63946"), main ="")
 abline(v = 0.07, col="black", lty=2)
-dev.off
 
 cpg_umap <- umap(cpg_scaled, n_neighbors = 10, learning_rate = 0.5, init ="random")
 
@@ -148,45 +145,21 @@ as.data.frame(cpg_umap) %>%
               dplyr::select(Sample_Name= index, cluster)) %>%
   left_join(fread(clinical_csv) %>%
   dplyr::select(Sample_Name, Sample.ID)) %>%
-  left_join(methylation_status %>%
-              filter(Methylation != "No") %>%
-              mutate(Methylation = gene) %>%
-              dplyr::select(Sample.ID, Methylation)) %>%
+  left_join(beta_sub_meth) %>%
   mutate(Methylation = if_else(is.na(Methylation), "No", Methylation),
-         Methylation = factor(Methylation, levels = c("BRCA1", "RAD51C", "No")),
+         Methylation = factor(Methylation, levels = c("BRCA1", "RAD51C", "BRCA1 & RAD51C", "No")),
          Cluster = case_when(cluster == 1 ~ "High methylation",
                            cluster == 2 ~ "Low methylation")) %>%
-  ggplot(aes(x= UMAP1, y =UMAP2,fill = Cluster, color = Cluster, shape = Methylation))+
+  ggplot(aes(x= UMAP1, y =UMAP2,shape = Cluster,fill = Methylation))+
   geom_point(size = 4)+
-  scale_shape_manual(values =c(22, 24, 21))+
+  scale_shape_manual(values =c(22, 24, 21, 23))+
+  scale_fill_manual(values = c("BRCA1 & RAD51C" = "#46351D","BRCA1" = "#93a667", "RAD51C" = "#7BB2D9", "No" = "grey"))
   scale_fill_manual(values = c("High methylation"="#E63946", "Low methylation" = "#457B9D"))+
   scale_color_manual(values = c("High methylation"="#E63946", "Low methylation" = "#457B9D"))+
   theme_bw()+
   theme(axis.ticks = element_blank(), axis.text = element_blank(),panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "bottom", legend.box = "vertical")
-ggsave("plots/Supplementary/Sup8a_umap_reduction_validation_clustering.pdf", height = 4, width = 4)
+# ggsave("plots/Supplementary/Sup8a_umap_reduction_validation_clustering.pdf", height = 4, width = 4)
 ```
-#Supplementary Table 9-1
-```{r}
-
-write.csv(as.data.frame(cpg_umap) %>%
-  `colnames<-` (c("UMAP1", "UMAP2")) %>%
-  mutate(Sample_Name = rownames(cpg_scaled)) %>%
-  left_join(fread(cluster_group_file) %>%
-              dplyr::select(Sample_Name= index, cluster)) %>%
-  left_join(fread(clinical_csv) %>%
-  dplyr::select(Sample_Name, Sample.ID)) %>%
-  left_join(methylation_status %>%
-              filter(Methylation != "No") %>%
-              mutate(Methylation = gene) %>%
-              dplyr::select(Sample.ID, Methylation)) %>%
-  mutate(Methylation = if_else(is.na(Methylation), "No", Methylation),
-         Methylation = factor(Methylation, levels = c("BRCA1", "RAD51C", "No")),
-         Cluster = case_when(cluster == 1 ~ "High methylation",
-                           cluster == 2 ~ "Low methylation"),
-         CaseID = substr(Sample.ID, 1, 8)) %>%
-    dplyr::select(CaseID, Methylation, Cluster, UMAP1, UMAP2), file = "data/supplementary_data/Table_S9_UMAP.csv",row.names = F, quote = F)
-```
-
 
 
 #Supplementary Fig 8 c)
