@@ -1,35 +1,34 @@
 args = commandArgs(trailingOnly=TRUE)
 
-working_dir = args[1]
-working_dir = "/working/lab_olgak/lijunX/HRDmethyl_public"
-
-# ICGC in separate MAF files we use somatic high confidence only, here a folder contain all the MAF files will be suffice
-depmap_mc3_location = paste0(working_dir, "/data/raw/DEPMAP/MAFs")
-
-
-out_dir = paste0(working_dir, "/data/processed/VCF")
 
 library("data.table")
 library("tidyverse")
 
-depmap_mc3 <- Sys.glob(paste0(depmap_mc3_location, "/*.gpc.maf.gz")) %>%
-  map_dfr(~fread(cmd = paste0("gunzip -cq ", .x), skip = "Hugo_Symbol") %>%
-            filter(Hugo_Symbol != "unknown"))
+working_dir = args[1]
+out_dir = paste0(working_dir, "/data/processed/VCF")
+maf_file = paste0(working_dir, "/data/processed/depmap_brett/OmicsSomaticMutations_23Q2_0523.csv")
 
-hr_gene = c("TP53", "BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D")
-gene_list = c("TP53", "PIK3CA", "IDH1", "ARID1A", "PTEN", "NUMA1", "QKI", "BCL11B", "BAP1", "CIC", "ATRX")
+gene_list <- c("BRCA1", "BRCA2", "RAD51C", "PALB2", "BRIP1", "RAD51D", "TP53", "PIK3CA", "ARID1A")
 
-cat("##fileformat=VCFv4.1\n##contig=<ID=1,length=249250621,assembly=b37>\n##reference=file:///path/to/human_g1k_v37.fasta\n",
+mutation_depmap <- fread(cmd = paste0("grep -E 'TP53|PIK3CA|ARID1A|BRCA|RAD51|PALB2|BRIP1' ",maf_file)) %>%
+  `colnames<-`( colnames(fread(cmd = paste0("head ",maf_file)))) %>%
+  filter(HugoSymbol %in% gene_list) %>%
+  right_join(depmap_model %>%
+               dplyr::select(ModelID, Sample.ID = StrippedCellLineName)) %>%
+  filter(Sample.ID %in% depmap_mRNA$Cell_name, !VariantInfo %in% c("INTRON", "FIVE_PRIME_FLANK", "THREE_PRIME_UTR" ,"SILENT"))
+
+
+#clinvar annotation
+cat("##fileformat=VCFv4.1\n##contig=<ID=1,length=249250621,assembly=b38>\n##reference=file:///path/to/human_g1k_v38.fasta\n",
     append=FALSE,
-    file= paste0(out_dir, "/depmap_variants_hg19.vcf"))
+        file= "data/processed/VCF/depmap_variants_hg38.vcf")
 
-HR_tp53_vcf <- depmap_mc3%>%
-                       filter(Hugo_Symbol %in% unique(c("TP53", "BRCA1", "BRCA2", "CDK12", "RAD51C", "PALB2", "BRIP1", "RAD51D", gene_list)))%>%
-                       mutate(`#CHROM` = Chromosome,
-                              POS = Start_Position,
+HR_tp53_vcf <- mutation_depmap %>%
+                       mutate(`#CHROM` = as.numeric(gsub("chr", "", Chrom)),
+                              POS = Pos,
                               ID = ".",
-                              REF = Reference_Allele,
-                              ALT = if_else(Tumor_Seq_Allele1 == Reference_Allele, Tumor_Seq_Allele2, Tumor_Seq_Allele1 ),
+                              REF = Ref,
+                              ALT =Alt,
                               QUAL = ".",
                               FILTER = "PASS",
                               INFO = ".") %>%
@@ -42,3 +41,4 @@ fwrite(HR_tp53_vcf,
        sep="\t",
        col.names = T,
        file=paste0(out_dir, "/depmap_variants_hg19.vcf"))
+

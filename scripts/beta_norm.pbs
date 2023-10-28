@@ -4,7 +4,7 @@
 #PBS -M lijunX@qimrberghofer.edu.au
 #PBS -v projectName,dirPath,wdir
 cd ${wdir}
-module load R/4.0.2
+module load R/4.2.0
 echo $projectName
 echo $dirPath
 Rscript ${wdir}/scripts/beta_norm.R $projectName ${wdir}/${dirPath}

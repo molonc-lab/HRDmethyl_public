@@ -144,7 +144,7 @@ bash scripts/4_run_cosmic_signature.sh $dir
 
 # MSI ICGC 
 ```{bash msi sensor for ICGC ovarian}
-bash scripts/5_run_msisensor.sh
+#bash scripts/5_run_msisensor.sh
 ```
 
 # HRD score ICGC
@@ -153,7 +153,7 @@ please run scripts/6_HRDscore_ICGC_OV.Rmd
 # Methylation clustering that is equivalent to Yates et al 
 please run scripts/7_methylation_clustering ICGC_OV.Rmd
 
-# Copy number
+# gene level Copy number
 ```{bash}
 for i in data/raw/*/copynumber; 
   do
