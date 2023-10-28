@@ -135,6 +135,7 @@ mv mRNA* data/output_error/
 # VEP
 ```{bash vep annotation of the somatic mutation}
 bash scripts/3_run_vep.sh $dir
+#bash scripts/3_run_vep_depmap.sh $dir
 ```
 # Mutation Signature 
 ```{bash}
