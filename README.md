@@ -33,6 +33,18 @@ Below are the dependencies for the Python and R languages.
 - ggpubr 0.6.0
 - purrr 1.0.1
 
+### R/4.0.2 (DepMap analysis)
+ggplot2 3.3.5
+purrr   0.3.4 
+tibble  3.1.6
+dplyr   1.0.10
+tidyr   1.1.4      
+ComplexHeatmap 2.6.2
+methylKit 1.16.1
+edgeR 3.32.1
+RColorBrewer 1.1-2 
+readxl 1.3.1
+
 ### R/3.6.2
 - ChAMP 2.16.2
 - drc 3.0-1
@@ -50,6 +62,7 @@ Below are the dependencies for the Python and R languages.
 - bedr 1.0.4
 
 ## Python dependencies
+
 ### Python/3.9.13
 - future 0.18.2
 - numpy 1.22.4
@@ -63,6 +76,12 @@ Below are the dependencies for the Python and R languages.
 - scipy 1.9.0
 - umap 0.5.3
 - netneurotools 0.2.3
+
+### Python 3.9.6 (DepMap)
+matplotlib         3.3.1
+numpy              1.25.2
+pandas             2.0.3
+
 
 # required data
 ## final directory structure
