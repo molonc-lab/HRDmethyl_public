@@ -6,7 +6,7 @@ BRCA1 and RAD51C promoter methylation exploration in TCGA, ICGC and DepMap datas
 We used CenOS Linux 7 (Core) with
 R/4.2.0, R/3.6.2, R/3.5.1, R/3.4.1 
 Python/3.9.13
-bedtools/v2.29.0
+bedtools/2.29.0
 VEP/102
 Bismark/0.19.1
 Below are the dependencies for the Python and R languages.
@@ -29,22 +29,38 @@ Below are the dependencies for the Python and R languages.
 - circlize 0.4.15
 - ggbeeswarm 0.7.2
 - ggpubr 0.6.0
+- purrr 1.0.1
 
 ### R/3.6.2
 - ChAMP 2.16.2
 - drc 3.0-1
 
 ### R/3.5.1
-- tidyverse
-- BSgenome
-- VariantAnnotation
-- docopt
+- tidyverse 1.3.1
+- BSgenome 1.50.0
+- VariantAnnotation 1.28.13
+- docopt 0.7.1
 
-###R/3.4.1
-- copynumber
-- Palimpsest
-- R.matlab
-- bedr
+### R/3.4.1
+- copynumber 1.16.0
+- Palimpsest 1.0.0
+- R.matlab 3.6.2
+- bedr 1.0.4
+
+## Python dependencies
+### Python/3.9.13
+- future 0.18.2
+- numpy 1.22.4
+- pandas 2.0.2
+- tqdm 4.65.0
+- sklearn 1.1.2
+- networkx 2.8.5
+- numbpy.linalg
+- matplotlib -3.5.3
+- seaborn 0.11.2
+- scipy 1.9.0
+- umap 0.5.3
+- netneurotools 0.2.3
 
 
 
