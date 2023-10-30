@@ -1,5 +1,6 @@
 <h1>  HRDmethyl_public </h1>
 BRCA1 and RAD51C promoter methylation exploration in TCGA, ICGC and DepMap datasets
+** for depmap preprocessing and visualisation of methylation status per CpG please see https://github.com/molonc-lab/rrbs-scripts
 
 
 # System requirements
