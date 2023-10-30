@@ -62,5 +62,45 @@ Below are the dependencies for the Python and R languages.
 - umap 0.5.3
 - netneurotools 0.2.3
 
+# required data
+## final directory structure
+├── data
+│   ├── output_error
+│   ├── processed
+│   │   ├── copynumber
+│   │   ├── depmap_brett
+│   │   ├── hrdetect_icgc
+│   │   ├── hrd_icgc
+│   │   │   ├── Array_HRD_score
+│   │   │   └── WGS_HRD_score
+│   │   ├── methylation
+│   │   ├── methylation_clustering
+│   │   ├── mRNA
+│   │   ├── scarHRD
+│   │   ├── Signatures
+│   │   └── VCF
+│   ├── raw
+│   ├── source_data
+│   ├── supplementary_data
+│   └── supporting
+├── figures
+├── plots
+│   └── Supplementary
+└── scripts
 
+## raw data
+raw data availability please refer to the paper
+raw data directory structure - example
 
+raw
+└─── 20220401_TCGA_BLCA_meth
+    ├── copynumber
+    ├── IDAT
+    ├── MAF
+    └── mRNA
+
+# running
+generation of processed data that is required to plot
+step 1. acquire all the raw and supporting data needed
+step 2. run script main.Rmd in the root directory
+step 3. run plotting.Rmd in the root directory
