@@ -1,0 +1,28 @@
+#!/bin/bash
+######################
+#PBS -N filter_cpg_sites
+#PBS -l walltime=24:00:00
+#PBS -l ncpus=1,mem=8Gb
+#PBS -j oe
+#PBS -m ae
+#PBS -M brett.liddell@qimrberghofer.edu.au
+#PBS -o /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/bed_intersect_output.txt
+#PBS -e /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/bed_intersect_error.txt
+#######################
+
+module load bedtools/2.29.0
+
+# get exported BED file from R
+df_bed_file="/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/autosom_ds_globalCpGs_33lines.bed"
+cpgi_bed_file="/working/lab_olgak/brettL/work/stad_depmap/rerun/data/cpgIslandExt.hg19.bed"
+
+# intersect exported bed data with CpG islands bed file from UCSC
+output_intersect_file="/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/combined_cpgi_cpgs_uniq.bed"
+bedtools intersect -a "$df_bed_file" -b "$cpgi_bed_file" -wa > "$output_intersect_file"
+
+#get unique sites only
+sort -k1,1 -k2,2n "$output_intersect_file" | uniq -w 10 > "$output_intersect_file"
+#sort -k1,1 -k2,2n combined_cpgi_cpgs_uniq.bed | uniq -w 10 > combined_cpgi_cpgs_uniq2.bed
+
+
+module purge

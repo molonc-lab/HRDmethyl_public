@@ -1,0 +1,19 @@
+#!/bin/bash
+######################
+#PBS -N BirdSeedSNP6
+#PBS -l walltime=08:00:00
+#PBS -l ncpus=1,mem=30Gb
+#PBS -j oe
+#PBS -m ae
+#PBS -M brett.liddell@qimrberghofer.edu.au
+#PBS -o /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/loadbamsR_output.txt
+#PBS -e /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/loadbamsR_error.txt
+#######################
+
+cd /working/lab_olgak/brettL/work/stad_depmap/rrbs-scripts/preproc_scripts/bismark_scripts
+
+module load R/4.0.2
+
+Rscript load_bismark_bams.R
+
+module purge

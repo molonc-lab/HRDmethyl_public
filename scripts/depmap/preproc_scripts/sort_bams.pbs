@@ -1,0 +1,29 @@
+#!/bin/bash
+
+######################
+#PBS -N sort_bis_bams
+#PBS -l walltime=01:00:00
+#PBS -l ncpus=1,mem=4Gb
+#PBS -j oe
+#PBS -m ae
+#PBS -M brett.liddell@qimrberghofer.edu.au
+#PBS -o /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/sort_array_output.txt
+#PBS -e /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/sort_array_error.txt
+#PBS -J 0-36
+#######################
+
+module load samtools/1.16
+
+# directories
+dir_path="/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/all_bis_aligned"
+output_dir="/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/bis_aligned_sorted"
+
+bam_files=(${dir_path}/*.bam)
+bam_file=${bam_files[$PBS_ARRAY_INDEX-1]}
+
+bam_base=$(basename "$bam_file" .bam)
+
+# output to bis_aligned_sorted
+samtools sort "${bam_file}" -o "${output_dir}/${bam_base}.sorted.bam"
+
+module purge

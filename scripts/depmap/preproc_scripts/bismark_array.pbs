@@ -1,0 +1,30 @@
+#!/bin/bash
+######################
+#PBS -N BismarkArraySTAD
+#PBS -l walltime=03:00:00
+#PBS -l ncpus=6,mem=22Gb
+#PBS -j oe
+#PBS -m ae
+#PBS -M brett.liddell@qimrberghofer.edu.au
+#PBS -J 0-36
+#PBS -o /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/bismark_array_output.txt
+#PBS -e /working/lab_olgak/brettL/work/stad_depmap/rerun/pbs_output/bismark_array_error.txt
+#######################
+
+cd /working/lab_olgak/brettL/work/stad_depmap/rerun/data/primary_data/STAD_SRAs
+
+# use *.fq.gz if the files end in that extension
+sra_files=(*.fastq.gz)
+
+echo "$sra_files"
+
+sra_file=${sra_files[$PBS_ARRAY_INDEX-1]}
+
+echo "$sra_file"
+
+module load bismark/0.19.1
+
+bismark --output_dir /working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/bismark_aligned --multicore 2 --genome /working/lab_olgak/brettL/work/stad_depmap/rerun/data/GRCh37_ICGC_standard_v2_bismark_conv $sra_file
+
+module purge
+

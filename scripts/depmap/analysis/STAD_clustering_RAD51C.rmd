@@ -1,0 +1,489 @@
+---
+title: "STAD Clustering RAD51C"
+author: "Brett Liddell"
+date: "September 19, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## Step 1 (Required) Load libraries and assign directories
+
+GO TO STEP 3 to load workspace with destranded autosomal CpGs in a dataframe: 
+mincov5minqual20STADDEPMAP_autosom_DS.RData file
+
+You may also (not recommended) go to step 2 to load non-destranded CpG data as methylKit objects:  
+mincov5minqual20STADDEPMAP.RData file
+
+```{r libraries}
+library(methylKit)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(ComplexHeatmap)
+library(dendextend)
+library(conflicted)
+library(data.table)
+library(factoextra)
+library(scales)
+library(pheatmap)
+library(cluster)
+library(uwot)
+#library(impute)
+library(mice)
+
+load_data_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/rdata_files/"
+
+plot_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/plots/"
+
+output_data_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/output_data/"
+
+set.seed(42)
+
+```
+
+```{r session info}
+sessionInfo()
+```
+
+##Step 2.1 (Recommended to skip to step 3) Load in the list of methylkit objects workspace
+The methylRaw objects are in a list called list and information about coverage, numCs and numTs per CpG site. 
+The minimum coverage for the CpG sites for the 35 methylRaw objects (corresponding to GC cell lines) is 5. 
+
+```{r load methylation data workspace}
+
+#First time loading only!!!
+load(paste(load_data_dir,"mincov5minqual20STADDEPMAP.RData", sep = ""))
+
+```
+
+```{r Map SRA accessions to cell line names - _STOMACH removed}
+
+mapping <- c(
+  "SRR8633864"="MKN74",
+  "SRR8633865"="MKN7",
+  "SRR8633883"="SNU668",
+  "SRR8633887"="SNU601",
+  "SRR8633889"="SNU520",
+  "SRR8633890"="SNU5",
+  "SRR8633902"="MKN1",
+  "SRR8633908"="MKN45",
+  "SRR8633910"="IM95",
+  "SRR8633941"="HGC27",
+  "SRR8633967"="SNU719",
+  "SRR8633973"="SNU620",
+  "SRR8634018"="RERFGC1B",
+  "SRR8634035"="KE39",
+  "SRR8634072"="GSS",
+  "SRR8634073"="GSU",
+  "SRR8634111"="NUGC4",
+  "SRR8633575"="SNU16",
+  "SRR8633579"="NUGC3",
+  "SRR8633591"="TGBC11TKB",
+  "SRR8633615"="FU97",
+  "SRR8633634"="2313287",
+  "SRR8633673"="SH10TC",
+  "SRR8633707"="KATOIII",
+  "SRR8633738"="GCIY",
+  "SRR8633801"="SNU1",
+  "SRR8633802"="SNU216",
+  "SRR8633850"="NUGC2",
+  "SRR8633212"="HUG1N",
+  "SRR8633294"="AGS",
+  "SRR8633310"="LMSU",
+  "SRR8633365"="ECC10",
+  "SRR8633366"="ECC12",
+  "SRR8633424"="NCIN87",
+  "SRR8633455"="HS746T",
+  "SRR8633471"="NCCSTCK140",
+  "SRR8633526"="OCUM1"
+)
+
+```
+
+##Step 2.3 Destrand the CpGs and filter out autosomal CpGs only
+
+```{r}
+# Below is the DESTRAND FUNCTION FROM methylkit
+.CpG.dinuc.unify <- function(cpg)
+{
+  oldSciPen <- options()$scipen
+  options(scipen = 999)
+  ## silence R CMD check NOTE
+  coverage.x = coverage.y = NULL
+  numCs.x = numCs.y =  NULL
+  numTs.x = numTs.y = NULL
+  
+  cpg = data.table(cpg, key = c("chr", "start", "end"))
+  cpgF = cpg[strand == "+", ]
+  cpgR = cpg[strand == "-", ]
+  cpgR[, `:=`(start = start - 1L,
+              end = end - 1L,
+              strand = "+")]
+  
+  cpgFR = merge(cpgF, cpgR, by = c("chr", "start", "end"), allow.cartesian = TRUE)
+  
+  cpgFR[, `:=`(
+    strand = "+",
+    coverage = coverage.x + coverage.y,
+    numCs = numCs.x + numCs.y,
+    numTs = numTs.x + numTs.y
+  )][, grep("x|y", names(cpgFR), value = TRUE) := NULL]
+  
+  Fid = paste(cpgF$chr, cpgF$start, cpgF$end)
+  Rid = paste(cpgR$chr, cpgR$start, cpgR$end)
+  FRid = paste(cpgFR$chr, cpgFR$start, cpgFR$end)
+  cpgFR = rbind(cpgFR, cpgF[!Fid  %in%  FRid,], cpgR[!Rid  %in%  FRid,])
+  
+  cpgFR[, `:=`(
+    chr = as.character(chr),
+    strand = as.character(strand),
+    start = as.integer(start),
+    end = as.integer(end)
+  )]
+  
+  setorder(cpgFR, "chr", "start")
+  options(scipen = oldSciPen)
+  return(as.data.frame(cpgFR))
+}
+
+destrand_global_df <- seq_along(list) %>% 
+  map_dfr(function(i) {
+    sample_name <- list[[i]]@sample.id
+    list[[i]] %>%
+      getData() %>%
+      .CpG.dinuc.unify() %>%
+      mutate(sample_id = sample_name)
+  })
+
+print(dim(destrand_global_df))
+head(destrand_global_df)
+
+autosom_ds_global_df <- destrand_global_df %>%
+  dplyr::filter(stringr::str_detect(chr, "^chr[0-9]+$")) %>%
+  #coverage is calculated by adding the number of Cs and Ts
+  mutate(Coverage = numTs + numCs, Meth_perc = numCs/(numTs + numCs), Cell_name = mapping[sample_id])  # Divide start by 1,000,000 to convert to Mb
+
+print(dim(autosom_ds_global_df))
+head(autosom_ds_global_df)
+
+unique(autosom_ds_global_df$Cell_name)
+
+dim(unique(autosom_ds_global_df[, c("chr", "start")]))
+```
+
+##Step 2.4 Save this dataframe with autosomal, destranded CpG data
+```{r}
+
+save.image(paste(load_data_dir,"mincov5minqual20STADDEPMAP_autosom_DS.RData", sep = ""))
+
+```
+
+## Step 3 (if skipping Step 2) - Load preloaded autosomal destranded CpG workspace - CURRENTLY USING THIS .RData file, run chunks past this
+
+```{r}
+
+load(paste(load_data_dir,"mincov5minqual20STADDEPMAP_autosom_DS.RData", sep = ""))
+```
+
+```{r}
+#confirm the number of unique CpGs and cell lines in the destranded data
+dim(unique(autosom_ds_global_df[, c("chr", "start")]))
+
+unique(autosom_ds_global_df$Cell_name)
+
+```
+
+############################################################################
+
+
+
+# RAD51C SPECIFIC Analysis and Clustering 
+
+## Step 4 Extract RAD51C data from initial destranded dataframe:
+autosom_ds_global_df
+
+```{r}
+
+rad51c_CpG_data <- autosom_ds_global_df %>%
+  #dplyr::filter(chr == "chr17" & start >= 56769890 & start <= 56770425)
+  dplyr::filter(chr == "chr17" & start >= (56769934 - 200) & start <= (56769934 + 200) )
+
+rad51c_cell_lines <- unique(rad51c_CpG_data$Cell_name)
+
+global_cell_lines <- unique(autosom_ds_global_df$Cell_name)
+
+#print the cell lines that do not have coverage of RAD51C
+setdiff(as.vector(global_cell_lines), as.vector(rad51c_cell_lines))
+
+
+```
+
+# Step 5 Check Coverage of RAD51C Promoter Region (minqual >=20, mincov >=5)
+
+```{r RAD51C Coverage Dotplot}
+
+# Create the dotplot
+cov_dotplot <- ggplot(rad51c_CpG_data, aes(x = start, y = Cell_name, color = "green")) +
+  xlab("Position of CpG on Chromosome 17 (bp)") +
+  ylab("Cell Line") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("CpG Sites with Coverage Greater than Five in RAD51C Promoter Region") +
+  geom_point() +
+  scale_color_identity()
+
+# Print the dotplot
+print(cov_dotplot)
+
+ggsave(paste0(plot_dir,"Coverage_RAD51C_Comparison.pdf"), plot = cov_dotplot, width = 10, height = 8)
+```
+
+
+# Step 6 Clustering of STAD Cell lines based on RAD51C methylation
+May need to edit this code to reduce redundancy - still functional
+```{r}
+
+# Remove MKN45 due to having only 4 CpG sites for RAD51C (and low coverage overall)
+rad51c_CpG_data <- rad51c_CpG_data %>% dplyr::filter(!(Cell_name == "MKN45"))
+
+unique(rad51c_CpG_data$Cell_name)
+
+# Reshape the data to get Meth_perc values in matrix format
+reshaped_rad51c <- rad51c_CpG_data %>%
+  dplyr::select(Cell_name, start, Meth_perc) %>%
+  #spread(key = start, value = Meth_perc)
+  pivot_wider(names_from = Cell_name, values_from = Meth_perc) %>% 
+  drop_na()
+
+head(reshaped_rad51c)
+
+reshape_rnames2 <- as.vector(t(reshaped_rad51c[1]))
+reshaped_rad51c <- reshaped_rad51c[-1]
+rownames(reshaped_rad51c) <- reshape_rnames2
+
+head(reshaped_rad51c)
+
+
+rad51c_hmap_data <- as.matrix(reshaped_rad51c)
+rad_hmap_data_cnames <- colnames(rad51c_hmap_data)
+
+rad51c_hmap_data <- matrix(as.numeric(as.vector(rad51c_hmap_data)), nrow = nrow(rad51c_hmap_data))
+rownames(rad51c_hmap_data) <- reshape_rnames2
+colnames(rad51c_hmap_data) <- rad_hmap_data_cnames
+
+#sample_clust_rad <- hclust(dist(scale(t(rad51c_hmap_data))))
+cpg_site_clust_rad <- hclust(dist(scale(rad51c_hmap_data)))
+
+k <- 2
+#sample_clust_k <- kmeans(t(heatmap_data), centers = k)
+sample_clust_k_rad <- kmeans(scale(t(rad51c_hmap_data)), centers=2, nstart=25, iter.max = 100)
+
+annotation_df_rad <- data.frame(Cluster = factor(sample_clust_k_rad$cluster))
+rownames(annotation_df_rad) <- colnames(rad51c_hmap_data) 
+colors <- c("blue", "red")
+names(colors) <- c(1, 2)
+annotation_colors <- list(Cluster = colors)
+
+# Single color heatmap
+single_color <- colorRampPalette(c("blue", "white", "red"))(256)
+
+
+# Order your data based on the kmeans clusters
+rad_ordered_data <- rad51c_hmap_data[, order(sample_clust_k_rad$cluster)]
+
+head(rad_ordered_data)
+
+kmeans_heatmap <- pheatmap::pheatmap(t(rad_ordered_data),
+         #cluster_cols = cpg_site_clust_rad,
+         cluster_rows = FALSE,
+         annotation_row = annotation_df_rad,
+         annotation_colors = annotation_colors,
+         color = single_color,
+         show_rownames = TRUE,
+         show_colnames = TRUE, 
+         angle_col = 315)
+        
+
+# Open a new PDF file with specific width and height
+pdf(paste0(plot_dir,"Kmeans_rad51c_meth_heatmap.pdf"), width = 7, height = 5)
+
+# Print the heatmap
+print(kmeans_heatmap)
+
+dev.off()
+```
+
+
+
+## Step 7 - Save the RAD51C clustering information for rrbs-scripts/analysis/lollipop.py
+```{r}
+#export the above table in a format that is able to be clustered with a lollipop plot 
+
+#if the average "beta" value for a site is above 0.8
+# it is annotated as homozygous
+
+head(rad_ordered_data)
+
+#temp_RAD51C_clust_beta <- t(rad_ordered_data)
+
+meth_class <- function(meth_avg){
+  print(meth_avg)
+  m_class = ""
+  if (meth_avg >= 0.8){
+    m_class = "homozygous"
+  } 
+  else if(meth_avg >= 0.2){
+    m_class = "heterozygous"
+  }
+  else{
+    m_class = "no methylation"
+  }
+  return(m_class)
+}
+
+
+rad_ordered_data_t <- as.data.frame(t(rad_ordered_data))
+
+row_means <- apply(rad_ordered_data_t, 1, mean)
+
+# apply the meth_class function to the row means
+meth_levels <- sapply(row_means, meth_class)
+
+rad_ordered_data_t$level <- meth_levels
+
+head(rad_ordered_data_t)
+
+#tail(RAD51C_clust_beta)
+
+#will need to transpose after import into lollipop.py
+write.csv(rad_ordered_data_t, paste(output_data_dir, "RAD51C_clusters_methylation_STAD.csv", sep =""))
+
+
+head(sample_clust_k_rad$cluster)
+
+rad51c_cluster_table <- (as.matrix(sample_clust_k_rad$cluster))
+head(rad51c_cluster_table)
+
+rad51c_cluster_table <- cbind(rownames(rad51c_cluster_table), data.frame(rad51c_cluster_table, row.names=NULL))
+  
+colnames(rad51c_cluster_table) <- c("Cell_name", "cluster")
+head(rad51c_cluster_table)
+
+write.csv(as.matrix(rad51c_cluster_table), paste(output_data_dir, "RAD51C_clusters_STAD.csv", sep =""), row.names = FALSE)
+```
+
+(Optional Analyses - RAD51C clustering)
+#Compute silhouette scores for different numbers of clusters
+```{r}
+# Set the range of possible numbers of clusters
+min_k <- 2
+
+# Find the number of total rows
+total_rows <- nrow(t(rad_ordered_data))
+
+# Find the number of duplicated rows
+duplicated_rows <- sum(duplicated(t(rad_ordered_data)))
+
+# Calculate the number of unique rows
+unique_rows <- total_rows - duplicated_rows
+
+# Print the number of unique rows
+print(unique_rows)
+
+# Ensure that max_k is less than or equal to the number of unique rows
+max_k <- min(unique_rows, 22)
+
+# Initialize a vector to store the silhouette scores
+silhouette_scores_rad <- numeric(length = max_k - min_k + 1)
+
+# Calculate the silhouette score for each k
+for (k in min_k:max_k) {
+  sample_clust_k_n_rad <- kmeans(t(rad_ordered_data), centers = k, nstart=25, iter.max = 100)
+  cluster_assignments <- sample_clust_k_n_rad$cluster
+  silhouette_result <- silhouette(cluster_assignments, dist(t(rad_ordered_data)))
+  silhouette_scores_rad[k - min_k + 1] <- mean(silhouette_result[, 3])
+}
+
+# Print the silhouette scores
+print(silhouette_scores_rad)
+
+# Open a new PDF file with specific width and height
+pdf(paste0(plot_dir,"Kmeans_rad51c_meth_silhouette.pdf"), width = 4, height = 4)
+
+# Create a sequence of k values that match the length of the silhouette scores
+k_values <- seq(min_k, length(silhouette_scores_rad) + min_k - 1)
+
+# Plot the silhouette scores
+plot(k_values, silhouette_scores_rad, type = "b", xlab = "Number of Clusters (k)", ylab = "Silhouette Score", main = "Silhouette Scores for Different Numbers of Clusters")
+
+dev.off()
+
+```
+
+# Show the RAD51C clusters with UMAP
+```{r}
+#now with the transposed heatmap containing the cluster values 
+
+#df_cluster_rad <- annotation_df_rad$Cluster
+df_beta_values_rad <- t(rad_ordered_data)
+
+#dim(t(rad_ordered_data))
+
+df_beta_values_rad <- merge(df_beta_values_rad, annotation_df_rad, by = 0, all = TRUE)
+df_beta_values_rad
+
+dim(df_beta_values_rad)
+
+
+umap_results_rad <- umap(df_beta_values_rad[,-(length(df_beta_values_rad))])
+
+umap_data_rad <- data.frame(umap_results_rad) %>%
+  mutate(Cluster = as.factor(df_beta_values_rad$Cluster))
+#dim(umap_data_rad)
+
+rad_UMAP <- ggplot(umap_data_rad, aes(x = X1, y = X2, color = Cluster)) +
+  geom_point(size = 2, alpha = 0.6) +
+  labs(x = "UMAP1", y = "UMAP2") +
+  theme_minimal() +
+  #scale_color_brewer(palette = "Set2") + 
+  scale_color_manual(values=c("blue", "red")) +
+  xlim(-4, 4) + 
+  ylim(-4,4) + 
+  labs(title = "UMAP of STAD CCLE Cell Lines by RAD51C Methylation") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+print(rad_UMAP)
+ggsave(paste0(plot_dir,"RAD_UMAP.pdf"), plot = rad_UMAP, width = 3, height = 3)
+```
+
+#Compute mean beta values for no methylation and hypermethylated groups
+```{r}
+df_beta_values_rad
+
+#use heatmap_trans_w_clusters to get the mean beta value for each group
+df_beta_values_rad_means <- df_beta_values_rad %>%
+  dplyr::select(!Row.names)
+#get the mean of each CpG site
+rad_means <- df_beta_values_rad_means %>%
+  group_by(Cluster) %>%
+  summarise(across(everything(), mean, na.rm = TRUE))
+#get the mean of these means for each cluster
+
+rad_means2 <- rad_means[-1]
+rownames(rad_means2) <- rad_means$Cluster
+rowMeans(rad_means2)
+```
+
+
+
+
+

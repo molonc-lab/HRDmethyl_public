@@ -1,0 +1,392 @@
+---
+title: "CIMP Panel"
+author: "Brett Liddell"
+date: "October 19, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# Step 1 - Load libraries
+
+```{r libraries}
+library(methylKit)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(ComplexHeatmap)
+library(dendextend)
+library(conflicted)
+library(data.table)
+library(factoextra)
+library(scales)
+library(pheatmap)
+library(cluster)
+library(uwot)
+#library(impute)
+library(mice)
+
+load_data_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/rdata_files/"
+
+plot_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/plots/"
+
+output_data_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/output_data/"
+
+set.seed(42)
+
+```
+
+# SKIP - Step 2: Load in the data with minqual >= 20 and mincov >= 5
+generated with load_bismark_bams.pbs/.R scripts
+```{r load methylation data workspace}
+
+#First time loading only!!!
+#load(paste(load_data_dir,"mincov5minqual20STADDEPMAP.RData", sep = ""))
+
+```
+
+# SKIP - Step 3: Name mapping without _STOMACH
+```{r Map SRA accessions to cell line names - _STOMACH removed}
+
+mapping <- c(
+  "SRR8633864"="MKN74",
+  "SRR8633865"="MKN7",
+  "SRR8633883"="SNU668",
+  "SRR8633887"="SNU601",
+  "SRR8633889"="SNU520",
+  "SRR8633890"="SNU5",
+  "SRR8633902"="MKN1",
+  "SRR8633908"="MKN45",
+  "SRR8633910"="IM95",
+  "SRR8633941"="HGC27",
+  "SRR8633967"="SNU719",
+  "SRR8633973"="SNU620",
+  "SRR8634018"="RERFGC1B",
+  "SRR8634035"="KE39",
+  "SRR8634072"="GSS",
+  "SRR8634073"="GSU",
+  "SRR8634111"="NUGC4",
+  "SRR8633575"="SNU16",
+  "SRR8633579"="NUGC3",
+  "SRR8633591"="TGBC11TKB",
+  "SRR8633615"="FU97",
+  "SRR8633634"="2313287",
+  "SRR8633673"="SH10TC",
+  "SRR8633707"="KATOIII",
+  "SRR8633738"="GCIY",
+  "SRR8633801"="SNU1",
+  "SRR8633802"="SNU216",
+  "SRR8633850"="NUGC2",
+  "SRR8633212"="HUG1N",
+  "SRR8633294"="AGS",
+  "SRR8633310"="LMSU",
+  "SRR8633365"="ECC10",
+  "SRR8633366"="ECC12",
+  "SRR8633424"="NCIN87",
+  "SRR8633455"="HS746T",
+  "SRR8633471"="NCCSTCK140",
+  "SRR8633526"="OCUM1"
+)
+
+```
+
+# SKIP Step 4: Destrand the CpGs and filter out autosomal CpGs only
+Using methylkits function from their repo
+```{r}
+# Below is the DESTRAND FUNCTION FROM methylkit
+.CpG.dinuc.unify <- function(cpg)
+{
+  oldSciPen <- options()$scipen
+  options(scipen = 999)
+  ## silence R CMD check NOTE
+  coverage.x = coverage.y = NULL
+  numCs.x = numCs.y =  NULL
+  numTs.x = numTs.y = NULL
+  
+  cpg = data.table(cpg, key = c("chr", "start", "end"))
+  cpgF = cpg[strand == "+", ]
+  cpgR = cpg[strand == "-", ]
+  cpgR[, `:=`(start = start - 1L,
+              end = end - 1L,
+              strand = "+")]
+  
+  cpgFR = merge(cpgF, cpgR, by = c("chr", "start", "end"), allow.cartesian = TRUE)
+  
+  cpgFR[, `:=`(
+    strand = "+",
+    coverage = coverage.x + coverage.y,
+    numCs = numCs.x + numCs.y,
+    numTs = numTs.x + numTs.y
+  )][, grep("x|y", names(cpgFR), value = TRUE) := NULL]
+  
+  Fid = paste(cpgF$chr, cpgF$start, cpgF$end)
+  Rid = paste(cpgR$chr, cpgR$start, cpgR$end)
+  FRid = paste(cpgFR$chr, cpgFR$start, cpgFR$end)
+  cpgFR = rbind(cpgFR, cpgF[!Fid  %in%  FRid,], cpgR[!Rid  %in%  FRid,])
+  
+  cpgFR[, `:=`(
+    chr = as.character(chr),
+    strand = as.character(strand),
+    start = as.integer(start),
+    end = as.integer(end)
+  )]
+  
+  setorder(cpgFR, "chr", "start")
+  options(scipen = oldSciPen)
+  return(as.data.frame(cpgFR))
+}
+
+destrand_global_df <- seq_along(list) %>% 
+  map_dfr(function(i) {
+    sample_name <- list[[i]]@sample.id
+    list[[i]] %>%
+      getData() %>%
+      .CpG.dinuc.unify() %>%
+      mutate(sample_id = sample_name)
+  })
+
+print(dim(destrand_global_df))
+head(destrand_global_df)
+
+autosom_ds_global_df <- destrand_global_df %>%
+  dplyr::filter(stringr::str_detect(chr, "^chr[0-9]+$")) %>%
+  #coverage is calculated by adding the number of Cs and Ts
+  mutate(Coverage = numTs + numCs, Meth_perc = numCs/(numTs + numCs), Cell_name = mapping[sample_id])  # Divide start by 1,000,000 to convert to Mb
+
+print(dim(autosom_ds_global_df))
+head(autosom_ds_global_df)
+
+dim(autosom_ds_global_df %>% dplyr::filter(chr == "chr21"))
+
+
+unique(autosom_ds_global_df$Cell_name)
+
+dim(unique(autosom_ds_global_df[, c("chr", "start")]))
+```
+
+# SKIP Step 5 Save this dataframe with autosomal, destranded CpG data
+```{r}
+
+#save.image(paste(load_data_dir,"mincov5minqual20STADDEPMAP_autosom_DS.RData", sep = ""))
+
+```
+
+# RECOMMENDED TO START HERE AFTER STEP 1 - Step 6 (if skipping Step 2) - Load preloaded autosomal destranded CpG workspace
+
+```{r}
+
+load(paste(load_data_dir,"mincov5minqual20STADDEPMAP_autosom_DS.RData", sep = ""))
+```
+
+
+## Step 7 Remove IM95, KE39, KATOIII, and MKN45 cell lines 
+```{r}
+autosom_ds_global_df_33_lines <- autosom_ds_global_df %>% dplyr::filter(!(Cell_name == "IM95" | Cell_name == "KE39" | Cell_name == "KATOIII" | Cell_name == "MKN45"))
+
+head(autosom_ds_global_df_33_lines)
+unique(autosom_ds_global_df_33_lines$Cell_name)
+
+dim(unique(autosom_ds_global_df_33_lines[, c("chr", "start")]))
+```
+
+As it is ideal to filter out CpG sites with low standard deviation, as well as sites that are not within CpG islands, we can perform further filtering below and call the above functions again (as well as the heatmap function as there will be less sites)
+
+
+#Step 8 Load in data for which sites are in CpGis and filter the dataframe
+Bed file was generated with rrbs_cpgi_intersect_bed.pbs
+```{r}
+
+# PUT DATA FOR CPGS IN BED FILE FORMAT to run rrbs_cpgi_intersect_bed.pbs
+write.table(autosom_ds_global_df_33_lines[, c("chr", "start", "end", "strand", "coverage", "numCs", "numTs", "sample_id")],
+            file = "/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/autosom_ds_globalCpGs_33lines.bed",
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = FALSE)
+```
+
+```{r}
+
+
+cpg_islands <- read_delim("/working/lab_olgak/brettL/work/stad_depmap/rerun/data/intermediate_data/combined_cpgi_cpgs_uniq.bed", 
+                          delim = "\t", 
+                          col_names = c("chr", "start", "end"))
+
+dim(cpg_islands)
+tail(cpg_islands)
+
+
+cpg_islands <- cpg_islands %>% 
+  dplyr::select(chr, start) %>% 
+  mutate(chr_start = paste0(chr, ".", start)) %>%
+  dplyr::select(!c(chr, start)) %>% 
+  distinct(chr_start, .keep_all = TRUE)
+
+
+head(cpg_islands)
+length(unique(cpg_islands$chr_start))
+
+#MAKE A COLUMN chr_start to combine chromosome and start info into one column - in the event there are two sites with the same start position on different chromosomes
+
+# if not already ran in previous chunk:
+autosom_ds_global_df_33_lines_coord <- autosom_ds_global_df_33_lines %>%
+  mutate(chr_start = paste0(chr, ".", start)) %>%
+  dplyr::select(!c(chr, start))
+
+# Filter df to retain only rows with sites that are within the CpG islands
+global_cpgs_33_lines_cpgi <- autosom_ds_global_df_33_lines_coord %>%
+  inner_join(cpg_islands, by = c("chr_start"))
+
+
+# View the filtered dataframe
+head(global_cpgs_33_lines_cpgi)
+
+length(unique(global_cpgs_33_lines_cpgi$chr_start))
+
+#any(duplicated(autosom_ds_global_df_33_lines_coord))
+#any(duplicated(cpg_islands))
+
+```
+
+
+
+## Step 9 - Make a dataframe with cell lines as columns and CpG sites (chr_start) as rows
+
+```{r}
+# Should combine chr and start into one value
+#global_cpgs_33_lines_cpgi <- global_cpgs_33_lines_cpgi %>% mutate(chr_start = paste0(chr, ".", start))
+
+#head(global_cpgs_33_lines_cpgi)
+
+cell_line_cpg_cpgi <- global_cpgs_33_lines_cpgi %>%
+  dplyr::select(Cell_name, chr_start, Meth_perc) %>%
+  pivot_wider(names_from = Cell_name, values_from = Meth_perc) %>% 
+  drop_na()
+
+#colnames(cell_line_cpg_cpgi)
+
+dim(cell_line_cpg_cpgi)
+head(cell_line_cpg_cpgi)
+
+```
+
+
+```{r}
+#with the reshaped_data, add on a column with the s.d. for each site
+cell_line_cpg_cpgi_sd <- transform(cell_line_cpg_cpgi, SD=apply(cell_line_cpg_cpgi[,2:34],1, sd, na.rm = TRUE))
+
+head(cell_line_cpg_cpgi_sd)
+p <- ggplot(cell_line_cpg_cpgi_sd, aes(x=SD)) + 
+  geom_density()
+
+print(p)
+
+#cell_line_cpg_cpgi_sd <- cell_line_cpg_cpgi_sd %>% dplyr::filter(SD >= 0.2) %>% dplyr::select(!SD)
+cell_line_cpg_cpgi_sd <- cell_line_cpg_cpgi_sd %>% dplyr::filter(SD >= 0.3) %>% dplyr::select(!SD)
+
+
+head(cell_line_cpg_cpgi_sd)
+
+dim(cell_line_cpg_cpgi_sd)
+
+```
+
+```{r cells as cols cpgs semiord - FIXING annotation bar}
+# need to put the cell names as rows initially to do distance
+# Save the cell line names before transposition
+cell_line_names <- colnames(cell_line_cpg_cpgi_sd)[-1]
+
+cell_line_row_df<- as.data.frame(t(cell_line_cpg_cpgi_sd[-1]))
+
+rownames(cell_line_row_df) <- cell_line_names
+
+
+colnames(cell_line_row_df) <- cell_line_cpg_cpgi_sd$chr_start
+distance_matrix <- dist(cell_line_row_df, method="euclidean")
+
+h_cluster <- hclust(distance_matrix)
+clusters <- cutree(h_cluster, k=2)
+
+clusters
+
+# Plotting heatmap
+#french.colors <- colorRampPalette(c("royalblue4", "white", "red4"))
+french.colors <- colorRampPalette(c("blue", "white", "red"))
+
+palette_100 <- french.colors(50)
+
+# Convert the data to a matrix for heatmap
+# and also transpose it back so that cell lines are columns 
+cell_line_col_df <- t(as.matrix(cell_line_row_df[,-(1:3)]))
+
+head(cell_line_col_df)
+#colnames(cell_line_col_df) <- cell_line_row_df$Cell_Line
+
+# now the trouble is that you've flipped the dataframe 
+# but it'll either be in the wrong order or the right order 
+# so flip accordingly
+
+
+cluster_labels <- case_when(
+  clusters == 1 ~ "CIMP-",
+  clusters == 2 ~ "CIMP+",
+  TRUE ~ "unknown"
+)
+
+
+clusters_factor <- factor(cluster_labels, levels = c("CIMP-", "CIMP+"))
+
+names(clusters_factor) <- "CIMP"
+
+annotation_legend_params <- list(
+  CIMP = list(
+    direction = "horizontal", 
+    title_position = "leftcenter",  # Position the title to the left of the legend
+    title_gp = gpar(fontsize = 10, fontface = "bold", col = "black"),  # Customize font size, face, and color
+    labels_gp = gpar(fontsize = 10)
+  )
+)
+
+
+ha = HeatmapAnnotation(CIMP = clusters_factor, gap = unit(5, "mm"),
+                       col = list(CIMP = c("CIMP-" = "#D6F8D6", "CIMP+" = "#7FC6A4")),
+                         #CIMP = c("CIMP-" = "darkseagreen1", "CIMP+" = "mediumaquamarine")), 
+                       annotation_name_col = NULL, 
+                       annotation_name_row = NULL, 
+                       annotation_legend_param = annotation_legend_params)
+
+
+# Create the heatmap
+heatmap2 <- Heatmap(cell_line_col_df,
+                    col = palette_100,
+                    cluster_rows = FALSE,  # Since we pre-ordered the data
+                    cluster_columns = h_cluster,
+                    show_row_names = FALSE, # To show cell line names
+                    show_column_names = TRUE,  # Turn off chr.start label
+                    name = "Meth lvl",
+                    top_annotation = ha, 
+                    heatmap_legend_param = list(direction = "horizontal", title_position = "lefttop", title_gp = gpar(fontsize = 10, fontface = "bold"), labels_gp = gpar(fontsize = 9), at = c(0,0.5,1))
+                    ) 
+
+draw(heatmap2, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+
+
+# Open a new PDF file with specific width and height
+pdf(paste0(plot_dir,"hclust_global_meth.pdf"), width = 6, height = 8)
+
+# The same heatmap code is repeated; only required if you need it plotted in another format
+draw(heatmap2,heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
+
+dev.off()
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
