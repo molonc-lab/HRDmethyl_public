@@ -34,16 +34,16 @@ Below are the dependencies for the Python and R languages.
 - purrr 1.0.1
 
 ### R/4.0.2 (DepMap analysis)
-ggplot2 3.3.5
-purrr   0.3.4 
-tibble  3.1.6
-dplyr   1.0.10
-tidyr   1.1.4      
-ComplexHeatmap 2.6.2
-methylKit 1.16.1
-edgeR 3.32.1
-RColorBrewer 1.1-2 
-readxl 1.3.1
+- ggplot2 3.3.5
+- purrr   0.3.4 
+- tibble  3.1.6
+- dplyr   1.0.10
+- tidyr   1.1.4      
+- ComplexHeatmap 2.6.2
+- methylKit 1.16.1
+- edgeR 3.32.1
+- RColorBrewer 1.1-2 
+- readxl 1.3.1
 
 ### R/3.6.2
 - ChAMP 2.16.2
@@ -78,9 +78,9 @@ readxl 1.3.1
 - netneurotools 0.2.3
 
 ### Python 3.9.6 (DepMap)
-matplotlib         3.3.1
-numpy              1.25.2
-pandas             2.0.3
+- matplotlib 3.3.1
+- numpy 1.25.2
+- pandas 2.0.3
 
 
 # required data
