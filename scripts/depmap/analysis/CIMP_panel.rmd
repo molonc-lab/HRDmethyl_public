@@ -364,13 +364,12 @@ ha = HeatmapAnnotation(CIMP = clusters_factor, gap = unit(5, "mm"),
                        annotation_legend_param = annotation_legend_params)
 
 
-# Create the heatmap
 heatmap2 <- Heatmap(cell_line_col_df,
                     col = palette_100,
-                    cluster_rows = FALSE,  # Since we pre-ordered the data
+                    cluster_rows = FALSE, 
                     cluster_columns = h_cluster,
-                    show_row_names = FALSE, # To show cell line names
-                    show_column_names = TRUE,  # Turn off chr.start label
+                    show_row_names = FALSE, 
+                    show_column_names = TRUE,  
                     name = "Meth lvl",
                     top_annotation = ha, 
                     heatmap_legend_param = list(direction = "horizontal", title_position = "lefttop", title_gp = gpar(fontsize = 10, fontface = "bold"), labels_gp = gpar(fontsize = 9), at = c(0,0.5,1))
@@ -379,10 +378,9 @@ heatmap2 <- Heatmap(cell_line_col_df,
 draw(heatmap2, heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
 
 
-# Open a new PDF file with specific width and height
+# new PDF 
 pdf(paste0(plot_dir,"hclust_global_meth.pdf"), width = 6, height = 8)
 
-# The same heatmap code is repeated; only required if you need it plotted in another format
 draw(heatmap2,heatmap_legend_side = "bottom", annotation_legend_side = "bottom")
 
 dev.off()

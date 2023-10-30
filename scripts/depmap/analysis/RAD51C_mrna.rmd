@@ -1,0 +1,185 @@
+##mRNA analysis
+```{r}
+library(edgeR)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(conflicted)
+```
+
+
+```{r}
+mRNA_path = "/working/genomeinfo/share/analysis/PublicData_-_Ghandi_2019_PRJNA523380/RNASeq_May2023/"
+
+plot_dir <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/plots/"
+
+exp_count_f_name <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.genes.ExpectedCounts.csv", sep = "")
+exp_count_f_name
+expected_counts <- read.csv(exp_count_f_name)
+
+
+# FPKM_fname <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.genes.FPKM.csv", sep = "")
+# FPKM <- read.csv(FPKM_fname)
+# 
+# iso_exp_counts_fname <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.isoforms.ExpectedCounts.csv", sep = "")
+# iso_exp_counts <- read.csv(iso_exp_counts_fname)
+# 
+# iso_FPKM_fname <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.isoforms.FPKM.csv", sep = "")
+# iso_FPKM <- read.csv(iso_FPKM_fname)
+# 
+# RNA_seq_qc_rep_fname <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.RNA-SeQC_Report.tsv", sep = "")
+# RNA_seq_qc_rep <- read.table(RNA_seq_qc_rep_fname, sep = '\t', header = TRUE)
+# 
+# RNA_seq_analysis_rep_fname <- paste(mRNA_path, "PublicData_-_Ghandi_2019_PRJNA523380.StudyRnaSeqAnalysisReport.tsv", sep = "")
+# RNA_seq_analysis_rep <- read.table(RNA_seq_analysis_rep_fname, sep = '\t', header = TRUE)
+```
+
+
+```{r}
+head(expected_counts)
+# head(FPKM)
+# head(iso_exp_counts)
+# head(iso_FPKM)
+# head(RNA_seq_qc_rep)
+# head(RNA_seq_analysis_rep)
+
+```
+
+
+```{r}
+custom_glimpse <- function(df) {
+  data.frame(
+    col_name = colnames(df),
+    col_index = 1:ncol(df),
+    col_class = sapply(df, class),
+    row.names = NULL
+  )
+}
+custom_glimpse(expected_counts)
+
+cell_line_names = unique(colnames(expected_counts))
+
+cell_line_names
+
+exp_count_data <- expected_counts[9:45]
+rownames(exp_count_data) <- expected_counts$Ensembl.Gene.ID
+
+# duplicates <- expected_counts %>% filter(Associated.Gene.Name == "RAD51C")
+# duplicates
+
+stad_edgeR <- DGEList(counts = exp_count_data, 
+                      samples = cell_line_names[9:45]) 
+
+head(stad_edgeR, n = 5)
+
+class(stad_edgeR)
+```
+
+
+```{r}
+stad_edgeR_norm <- calcNormFactors(stad_edgeR)
+
+head(stad_edgeR_norm)
+
+stad_edgeR_lcpm <- stad_edgeR_norm 
+
+stad_edgeR_lcpm$counts <- stad_edgeR_norm %>% cpm(log = TRUE, prior.count = 1)
+head(stad_edgeR_lcpm)
+
+
+```
+
+```{r}
+
+rad51c_exp <- stad_edgeR_lcpm$counts["ENSG00000108384", ]
+
+rad51c_exp <- as.data.frame(rad51c_exp)
+rad51c_exp$Cell_name <- sub("_STOMACH", "", rownames(rad51c_exp))
+rownames(rad51c_exp) <- NULL
+rad51c_exp
+
+unique(rad51c_exp$Cell_name)
+
+path_to_clust_csv <- "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/output_data/RAD51C_clusters_STAD.csv"
+
+rad51c_clust_assn <- read.csv(path_to_clust_csv)
+
+head(rad51c_clust_assn)
+
+rad51c_clust_assn[rad51c_clust_assn == '2313287'] <- 'X2313287'
+
+rad51c_clust_assn
+#rad51c_clust_assn <- as.data.frame(sample_clust_k_rad$cluster)
+#colnames(rad51c_clust_assn) <- c("cluster", "Cell_name")
+
+rad51c_clust_assn <- rad51c_clust_assn %>%
+  mutate(cluster = recode_factor(cluster, `1` = "no methylation", `2` = "hypermethylated"))
+
+
+
+#cbind the gene of interest's LogCPM expression 
+rad51c_meth_vs_exp <- inner_join(rad51c_exp, rad51c_clust_assn, by = "Cell_name")
+#colnames(rad51c_meth_vs_exp) <- c("rad51c_exp", "cluster")
+
+unique(rad51c_meth_vs_exp$Cell_name)
+
+rad51c_meth_vs_exp
+write.csv(rad51c_meth_vs_exp, "/working/lab_olgak/brettL/work/stad_depmap/rerun/analysis/output_data/RAD51C_methylation_gene_expression.csv", row.names =FALSE)
+
+rad51c_meth_vs_exp %>%
+  #filter(!is.na(CYP3A4)) %>%
+  ggplot(aes(sample = rad51c_exp, colour = cluster)) +
+  geom_qq() +
+  geom_qq_line() +
+  labs(x = "Theoretical Quantiles for Normal Distribution", y = "Sample Quantiles", title = "Q-Q plots of RAD51C Gene Expression Data by High & Low Methylation Group") +
+  facet_wrap(~cluster, scales = "free")
+
+low_m_rad51c <- rad51c_meth_vs_exp %>%
+  dplyr::filter(cluster == "no methylation") %>%
+  dplyr::select(rad51c_exp)
+
+high_m_rad51c <- rad51c_meth_vs_exp %>%
+  dplyr::filter(cluster == "hypermethylated") %>%
+  dplyr::select(rad51c_exp)
+
+shapiro.test(unlist(low_m_rad51c))
+shapiro.test(unlist(high_m_rad51c))
+
+wilcox.test(unlist(low_m_rad51c), unlist(high_m_rad51c))
+
+
+
+#rad51c_meth_vs_exp
+
+
+
+rad51c_gene_exp_by_group <- 
+  #group_by(Mutation_level)
+  ggplot(rad51c_meth_vs_exp, aes(x = cluster, y = rad51c_exp, fill = cluster))+
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) + 
+  geom_point(position = position_jitter(width = 0, height = 0),
+             size = 1,
+             alpha = 0.6,
+             aes(color = NA)) + 
+  scale_fill_manual(values=c("blue", "red")) +
+  scale_color_manual(values=c("blue", "red")) +
+
+  #xlab("RAD51C Methylation") +
+  theme(axis.title.x = element_blank()) +
+  #theme(axis.title.y = element_blank()) +
+  theme(axis.text.x = element_blank()) +
+  #theme(axis.text.y = element_blank()) +
+  ylab("LogCPM of RAD51C Gene Expression") +
+  #ggtitle("Expression of the RAD51C Gene In STAD Cell Lines with High and Low Promoter Methylation") +
+  #theme_minimal() +
+  ylim(0, 6)
+
+print(rad51c_gene_exp_by_group)
+
+ggsave(paste0(plot_dir,"RAD51C_gene_exp_vs_meth_box.pdf"), plot = rad51c_gene_exp_by_group, width = 6, height = 4)
+
+```
+
+
+
+

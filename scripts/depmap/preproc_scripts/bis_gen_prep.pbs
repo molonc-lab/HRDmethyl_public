@@ -1,0 +1,18 @@
+#!/bin/bash
+
+######################
+#PBS -N BirdSeedSNP6
+#PBS -l walltime=02:30:00
+#PBS -l ncpus=2,mem=8Gb
+#PBS -j oe
+#PBS -m ae
+#PBS -M b.liddell@uqconnect.edu.au
+#######################
+
+cd /working/lab_olgak/brettL/preproc_data/bismark_data
+
+module load bismark/0.19.1
+
+bismark_genome_preparation GRCh37_ICGC_standard_v2
+
+module purge
