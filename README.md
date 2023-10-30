@@ -103,6 +103,6 @@ raw
 ```
 # running
 generation of processed data that is required to plot
-step 1. acquire all the raw and supporting data needed
-step 2. run script main.Rmd in the root directory
-step 3. run plotting.Rmd in the root directory
+- step 1. acquire all the raw and supporting data needed
+- step 2. run script main.Rmd in the root directory
+- step 3. run plotting.Rmd in the root directory
