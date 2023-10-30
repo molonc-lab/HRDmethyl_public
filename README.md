@@ -64,6 +64,8 @@ Below are the dependencies for the Python and R languages.
 
 # required data
 ## final directory structure
+```
+.
 ├── data
 │   ├── output_error
 │   ├── processed
@@ -87,18 +89,18 @@ Below are the dependencies for the Python and R languages.
 ├── plots
 │   └── Supplementary
 └── scripts
-
+```
 ## raw data
 raw data availability please refer to the paper
 raw data directory structure - example
-
+```
 raw
 └─── 20220401_TCGA_BLCA_meth
     ├── copynumber
     ├── IDAT
     ├── MAF
     └── mRNA
-
+```
 # running
 generation of processed data that is required to plot
 step 1. acquire all the raw and supporting data needed
