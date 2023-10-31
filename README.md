@@ -1,16 +1,19 @@
 <h1>  HRDmethyl_public </h1>
 BRCA1 and RAD51C promoter methylation exploration in TCGA, ICGC and DepMap datasets
 
-** for depmap preprocessing and visualisation of methylation status per CpG please see https://github.com/molonc-lab/rrbs-scripts
+This repo contains streamline processing of TCGA and ICGC. DepMap was processed separately.
+** for DepMap preprocessing of rrbs and mRNA, as well as visualisation of methylation status per CpG, scripts are available from scripts/depmap/. details can be found in https://github.com/molonc-lab/rrbs-scripts)
+** DepMap figures (Figure 7b, c, d, e) can be found in the plotting.Rmd
 
 
 # System requirements
 We used CenOS Linux 7 (Core) with
-R/4.2.0, R/3.6.2, R/3.5.1, R/3.4.1 
-Python/3.9.13
-bedtools/2.29.0
-VEP/102
-Bismark/0.19.1
+- R/4.2.0, R/3.6.2, R/3.5.1, R/3.4.1 
+- Python/3.9.13 Python/3.9.6
+- bedtools/2.29.0
+- VEP/102
+- Bismark/0.19.1
+
 Below are the dependencies for the Python and R languages.
 
 ## R dependencies
@@ -77,7 +80,7 @@ Below are the dependencies for the Python and R languages.
 - umap 0.5.3
 - netneurotools 0.2.3
 
-### Python 3.9.6 (DepMap)
+### Python/3.9.6 (DepMap)
 - matplotlib 3.3.1
 - numpy 1.25.2
 - pandas 2.0.3
@@ -125,5 +128,6 @@ raw
 # running
 generation of processed data that is required to plot
 - step 1. acquire all the raw and supporting data needed
-- step 2. run script main.Rmd in the root directory
+- step 2. for TCGA and ICGC data, run script main.Rmd in the root directory
+- step 3. for depmap data, run scripts from scripts/depmap (details please see https://github.com/molonc-lab/rrbs-scripts)
 - step 3. run plotting.Rmd in the root directory
