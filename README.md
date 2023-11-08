@@ -139,7 +139,7 @@ raw data availability please refer to the paper
 raw data directory structure - example
 ```
 raw
-├─── 20220401_TCGA_BLCA_meth
+└─── 20220401_TCGA_BLCA_meth
     ├── blca_clinical.tsv
     ├── blca_sample.tsv
     ├── copynumber
