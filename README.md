@@ -139,21 +139,21 @@ raw data availability please refer to the paper
 raw data directory structure - example
 ```
 raw
-└─── 20220401_TCGA_BLCA_meth
+├─── 20220401_TCGA_BLCA_meth
     ├── blca_clinical.tsv
     ├── blca_sample.tsv
     ├── copynumber
-          ├── sample.gene_level_copy_number.v36.tsv
-          └── sample_cnv_sample.tsv
+    ├── sample.gene_level_copy_number.v36.tsv
+    │    └── sample_cnv_sample.tsv
     ├── IDAT
-          ├── sample_noid_Red.idat
-          └── sample_noid_Grn.idat
+    │    ├── sample_noid_Red.idat
+    │    └── sample_noid_Grn.idat
     ├── MAF
-          ├── sample_wxs.aliquot_ensemble_masked.maf
-          └── sample_maf_sample.tsv
-    └── mRNA
-          ├── sample.rna_seq.augmented_star_gene_counts.tsv
-          └── sample_mRNA_sample.tsv
+    │    ├── sample_wxs.aliquot_ensemble_masked.maf
+    │    └── sample_maf_sample.tsv
+    └── mRNA
+         ├── sample.rna_seq.augmented_star_gene_counts.tsv
+         └── sample_mRNA_sample.tsv
 ```
 ### IDAT 
 IDAT folder contains all the idat readouts from methylation array (HM450 platform)
