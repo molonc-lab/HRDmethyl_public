@@ -5,8 +5,26 @@ This repo contains streamline processing of TCGA and ICGC. DepMap was processed 
 ** for DepMap preprocessing of rrbs and mRNA, as well as visualisation of methylation status per CpG, scripts are available from scripts/depmap/. details can be found in https://github.com/molonc-lab/rrbs-scripts)
 ** DepMap figures (Figure 7b, c, d, e) can be found in the plotting.Rmd
 
+# Table of Content
+- [Table of Content](#table-of-content)
+- [System Requirements](#system-requirements)
+  - [R Dependencies](#r-dependencies)
+    - [R/4.2.0](#r420)
+    - [R/4.0.2 (DepMap analysis)](#r402-depmap-analysis)
+    - [R/3.6.2](#r362)
+    - [R/3.5.1](#r351)
+    - [R/3.4.1](#r341)
+  - [Python Dependencies](#python-dependencies)
+    - [Python/3.9.13](#python3913)
+    - [Python/3.9.6 (DepMap)](#python396-depmap)
+- [Required Data](#required-data)
+  - [Final Directory Structure](#final-directory-structure)
+  - [Raw Data Structure](#raw-data-structure)
+    - [IDAT](#idat)
+    - [MAF, mRNA](#maf-mrna)
+- [running](#running)
 
-# System requirements
+# System Requirements
 We used CenOS Linux 7 (Core) with
 - R/4.2.0, R/3.6.2, R/3.5.1, R/3.4.1 
 - Python/3.9.13 Python/3.9.6
@@ -16,7 +34,7 @@ We used CenOS Linux 7 (Core) with
 
 Below are the dependencies for the Python and R languages.
 
-## R dependencies
+## R Dependencies
 ### R/4.2.0
 - minfi 1.44.0
 - data.table 1.14.8
@@ -64,7 +82,7 @@ Below are the dependencies for the Python and R languages.
 - R.matlab 3.6.2
 - bedr 1.0.4
 
-## Python dependencies
+## Python Dependencies
 
 ### Python/3.9.13
 - future 0.18.2
@@ -86,8 +104,10 @@ Below are the dependencies for the Python and R languages.
 - pandas 2.0.3
 
 
-# required data
-## final directory structure
+# Required Data
+for supporting data from public datasets and publications, please refer to methods and data avaliability section
+
+## Final Directory Structure
 ```
 .
 ├── data
@@ -114,17 +134,37 @@ Below are the dependencies for the Python and R languages.
 │   └── Supplementary
 └── scripts
 ```
-## raw data
+## Raw Data Structure
 raw data availability please refer to the paper
 raw data directory structure - example
 ```
 raw
 └─── 20220401_TCGA_BLCA_meth
+    ├── blca_clinical.tsv
+    ├── blca_sample.tsv
     ├── copynumber
+    ├── sample.gene_level_copy_number.v36.tsv
+    │    └── sample_cnv_sample.tsv
     ├── IDAT
+    │    ├── sample_noid_Red.idat
+    │    └── sample_noid_Grn.idat
     ├── MAF
-    └── mRNA
+    │    ├── sample_wxs.aliquot_ensemble_masked.maf
+    │    └── sample_maf_sample.tsv
+    └── mRNA
+         ├── sample.rna_seq.augmented_star_gene_counts.tsv
+         └── sample_mRNA_sample.tsv
 ```
+### IDAT 
+IDAT folder contains all the idat readouts from methylation array (HM450 platform)
+
+When checkout the methyltion readouts from GDC portal, blca_clinical.tsv and blca_sample.tsv can be downloaded using the "Sample Sheet" and "Clinical" option.
+
+specifically, the sample sheet is essential for methylation preprocessing.
+
+### MAF, mRNA
+apart from masked maf file, a sample sheet for each assay and dataset should be acquired using the method described in the IDAT section
+
 # running
 generation of processed data that is required to plot
 - step 1. acquire all the raw and supporting data needed
