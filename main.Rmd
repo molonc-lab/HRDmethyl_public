@@ -119,7 +119,16 @@ finished=$(ls | grep -E "beta_plot_*.o*" | wc -l)
 while [ $finished != $(($running * 2)) ]; do running=$(wc -l data/supporting/idat_mapping.tsv | cut -d ' ' -f 1); finished=$(ls | grep -E "beta_plot_*.o*" | wc -l); sleep 20; done
 rm -rf beta_plot_*.*
 ```
-
+# gene level Copy number (updated with ASCAT3 segment)
+```{bash}
+#for i in data/raw/*/copynumber; 
+#  do
+#    project=${i%%+(_meth/copynumber)};
+#    project=${project##*20220401_};
+#    echo $project;
+#    grep -Er "BRCA1|RAD51C" $i | grep -v "BRCA1P1" |  sed 's/^\.\///g' > data/processed/copynumber/${project}_BRCA1_RAD51C_cnv.tsv;
+#  done
+```
 # mRNA preprocessing
 ```{bash mRNA calling}
 bash scripts/2_run_mRNA_edgeR.sh data/supporting/idat_mapping.tsv
@@ -153,13 +162,3 @@ please run scripts/6_HRDscore_ICGC_OV.Rmd
 # Methylation clustering that is equivalent to Yates et al 
 please run scripts/7_methylation_clustering ICGC_OV.Rmd
 
-# gene level Copy number
-```{bash}
-for i in data/raw/*/copynumber; 
-  do
-    project=${i%%+(_meth/copynumber)};
-    project=${project##*20220401_};
-    echo $project;
-    grep -Er "BRCA1|RAD51C" $i | grep -v "BRCA1P1" |  sed 's/^\.\///g' > data/processed/copynumber/${project}_BRCA1_RAD51C_cnv.tsv;
-  done
-```

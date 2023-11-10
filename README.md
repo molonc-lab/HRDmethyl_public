@@ -113,7 +113,6 @@ for supporting data from public datasets and publications, please refer to metho
 ├── data
 │   ├── output_error
 │   ├── processed
-│   │   ├── copynumber
 │   │   ├── depmap_brett
 │   │   ├── hrdetect_icgc
 │   │   ├── hrd_icgc
@@ -142,15 +141,12 @@ raw
 └─── 20220401_TCGA_BLCA_meth
     ├── blca_clinical.tsv
     ├── blca_sample.tsv
-    ├── copynumber
-    ├── sample.gene_level_copy_number.v36.tsv
-    │    └── sample_cnv_sample.tsv
+    ├── cn_seg
+         ├── sample.ascat[2|3].allelic_specific.seg.txt
+    │    └── sample_cn_seg_sample.tsv
     ├── IDAT
     │    ├── sample_noid_Red.idat
     │    └── sample_noid_Grn.idat
-    ├── MAF
-    │    ├── sample_wxs.aliquot_ensemble_masked.maf
-    │    └── sample_maf_sample.tsv
     └── mRNA
          ├── sample.rna_seq.augmented_star_gene_counts.tsv
          └── sample_mRNA_sample.tsv
