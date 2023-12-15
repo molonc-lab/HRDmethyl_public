@@ -739,7 +739,7 @@ hrd_predictors <- rbind(hrd_score_tcga, hrd_score_icgc)
 #assemble plot
   ggarrange(prevalence_plot[[1]]+theme(axis.title.x=element_blank()), 
             prevalence_plot[[2]]+theme(axis.title.x=element_blank()), align = "h",nrow = 2)
-  ggsave("plots/Main_Figure_1_Prevalence_of_RAD51C_BRCA1me.pdf", device = "pdf", width = 10, height = 6 )
+  ggsave("plots/Main_Figure_1a_Prevalence_of_RAD51C_BRCA1me.pdf", device = "pdf", width = 10, height = 6 )
 ```
 ##Main figure 1b - histo subtype
 ```{r}
@@ -840,7 +840,7 @@ molecular <- ggarrange(subtype_percent_plot, subtype_stack_plot,nrow =2, align =
 
 ggarrange(histo, NA, molecular, nrow = 3, align = "v", heights = c(0.44,0.02, 0.44))
 
-ggsave("plots/Main_Figure_1_Subtype_distribution.pdf",device = "pdf", height = 10,width = 11)
+ggsave("plots/Main_Figure_1b_Subtype_distribution.pdf",device = "pdf", height = 10,width = 11)
      
 ```
 ##Supplementary plot 1- HR gene promoter
@@ -878,7 +878,7 @@ dev.off()
 
 ```
 
-##Supplementary plot 2 - methylation heatmap 
+##Supplementary plot 3- methylation heatmap 
 ```{r}
 beta_sub_ht <- beta_sub %>%
   filter(PredefinedCpG %in% c("BRCA1", "RAD51C"), Sample_Group == "Primary Tumor", Sample_Name %in% Deduplicated_beta$Sample_Name) %>%
@@ -937,8 +937,8 @@ htmap_list <- beta_sub_ht %>%
                                                                       labels_gp = gpar(col = "black", fontsize = 10)))))
 
 
-pdf("plots/Supplementary/Sup2_heatmap_methylation.pdf")
-pdf("plots/Supplementary/Sup2_heatmap_methylation_NO_LEGEND.pdf")
+pdf("plots/Supplementary/Sup3_heatmap_methylation.pdf")
+pdf("plots/Supplementary/Sup3_heatmap_methylation_NO_LEGEND.pdf")
 # grid.newpage()
 # pushViewport(viewport(layout = grid.layout(nr = 10, nc = 4, heights = unit(rep(c(18),5), "null"), widths = unit(c(0.5,5,0.5,5),"null" ))))
 # for (x in 1:length(htmap_list)){
@@ -973,7 +973,7 @@ write.csv(beta_sub_meth %>%
   distinct(), "data/supplementary_data/Table_S1_methylation.csv", quote = F, row.names = F)
 
 ```
-##Supplementary plot 4 BRCA2, PALB2 and BRIP1
+##Supplementary plot 2 BRCA2, PALB2 and BRIP1
 ```{r}
 PALB2_meth <- beta_sub %>%
   filter( Project %in% c("LUSC"), Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal"), gene_promo_200 == "PALB2") %>%
@@ -1289,7 +1289,7 @@ ggsave(file="plots/Main_Figure_2_sextype.pdf", width = 250,height = 80, units = 
 ggsave(file="plots/Main_Figure_2_ances.pdf", width = 300,height = 100, units = "mm")
 
 ```
-##Supplementary plot 3 - TNBC
+##Supplementary plot 4 - TNBC
 ```{r}
 tnbc <- demograph_table_meth %>%
   ungroup() %>%
@@ -1649,15 +1649,15 @@ meth_per_gene_project <- mut_beta_sub_meth_t %>%
   summarise(n=n()) %>%
   pivot_wider(names_from = "Methylation",  values_from = "n", values_fill = 0) %>%
   pivot_longer(cols = c("BRCA1", "RAD51C"), names_to = "Methylated_gene", values_to = "total_meth") %>%
-  dplyr::rename(total_unmeth = No)
-
+  dplyr::rename(total_unmeth = No) 
 
 mut_beta_sub_meth_t_per_sample <- mut_beta_sub_meth_t %>%
   mutate(Sample.ID = if_else(Project =="OV", substr(Sample.ID, 1, 27), substr(Sample.ID, 1, 15))) %>%
   left_join(mc3_icgc %>%
               mutate(Sample.ID = if_else(startsWith(Sample.ID, "AOC"), substr(Sample.ID, 1, 27), Sample.ID)) %>%
   filter(silent_mutation == "No", Hugo_Symbol %in% oncokb_gene_list$`Hugo Symbol`)) %>%
-  distinct() 
+  distinct() %>%
+  filter( Hugo_Symbol %in% oncokb_gene_list$`Hugo Symbol`)
 
 #total meth vs unmeth
 # meth_unmeth_prev <- mut_beta_sub_meth_t_per_sample  %>%
@@ -1749,11 +1749,11 @@ type_rad51c_prev <- grid.arrange(grobs = type_brca1_rad51c_prev[c(7, 5, 3, 2)], 
 plot2 <- ggarrange(arrangeGrob(type_brca1_prev),arrangeGrob(type_rad51c_prev),nrow = 1, ncol =2)
 
 
-ggsave(plot = plot2 , "plots/Main_Figure_3_Mutation_prevalence_by_methylation.pdf", device = "pdf", width = 250, height = 120, units= "mm")
+ggsave(plot = plot2 , "plots/Main_Figure_4_Mutation_prevalence_by_methylation.pdf", device = "pdf", width = 250, height = 120, units= "mm")
 
 ```
 
-##Supplementary plot 5
+##Supplementary plot 5 co-mutation
 ```{r}
 #by gene
 brca1_rad51c_unmeth_prev_table <- mut_beta_sub_meth_t_per_sample  %>%

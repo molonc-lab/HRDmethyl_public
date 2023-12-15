@@ -1,0 +1,504 @@
+---
+title: "Supplementary_testicular_global_methylation"
+author: "lijunx"
+date: "June 9, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("purrr")
+library("data.table")
+library("tidyverse")
+```
+```{r}
+hm450_annotation = "../data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz"
+beta_file = "../data/processed/methylation/TCGA_STAD_meth_norm_beta.csv"
+beta_p_value = "../data/processed/methylation/TCGA_STAD_beta_pvalue.csv"
+clinical_csv = "../data/raw/20220401_TCGA_STAD_meth/IDAT/TCGA_STAD_pd.csv"
+purity_csv = "../data/processed/TCGA_ABSOLUTE_purity.txt"
+demographic_csv = "../data/raw/20220401_TCGA_STAD_meth/stad_clinical.tsv"
+Deduplicated_beta <- map_dfr(Sys.glob("../data/processed/methylation/*deduplicated_sample.csv"),
+                             ~ fread(.x, header = T, na.strings = "", fill = T) %>%
+  mutate(Project = gsub("_deduplicated_sample.csv", "", basename(.x)),
+  Sample_Group = gsub("Tumour", "Tumor", Sample_Group)))
+
+```
+
+
+```{r load methylation}
+#filter sample with better methylation detection
+pd <- fread(clinical_csv) 
+pvalue_filter <- pd %>%
+  filter(Sample_Group == "Primary Tumor", Sample.ID %in% Deduplicated_beta$Sample.ID) %>%
+  mutate(Patient.ID = substr(Sample.ID, 1,15)) 
+
+
+purity <- fread(purity_csv) %>%
+  mutate(Sample.ID = substr(sample, 1, 16)) %>%
+  dplyr::select(Sample.ID, purity) %>%
+  right_join(fread(clinical_csv) %>%
+              filter(Sample_Group == "Primary Tumor") %>%
+               dplyr::select(Sample.ID, Sample_Name)) %>%
+  dplyr::select(Sample.ID, Sample_Name, purity) 
+
+#load beta and apply filter
+beta_matrix <- fread(beta_file) %>%
+  column_to_rownames("V1") %>%
+  as.matrix()
+
+
+#beta_norm_corr <- champ.runCombat(beta = beta_matrix, pd = pd, batchname = c("Sentrix_Position"))
+
+beta_matrix <- beta_matrix[,pvalue_filter$Sample_Name] 
+
+beta_matrix <- data.frame(beta_matrix, check.names = F) %>%
+  rownames_to_column("V1")
+
+```
+```{r keep HM450-CGI and filter out CHRX/Y }
+filtered_cgi <- as.data.frame(fread(paste0("gunzip -cq ",hm450_annotation ))) %>%
+  filter(!is.na(CGI) & !CpG_chrm %in% c("chrX", "chrY") ) 
+
+filtered_cgi %>%
+  group_by(CGIposition) %>%
+  summarise(n=n())
+
+filtered_cgi %>%
+  group_by(CpG_chrm) %>%
+  summarise(n=n())
+```
+
+```{r first filter}
+print(paste0("pre-filtered probe number:", length(beta_matrix$V1)))
+beta_matrix <- beta_matrix %>%
+  filter(V1 %in% filtered_cgi$probeID)
+print(paste0("post-filtered probe number:", length(beta_matrix$V1)))
+```
+
+```{r move non-variable}
+sdlist<- beta_matrix %>%
+	gather("Sample.ID", "beta", -V1) %>%
+	group_by(V1) %>%
+	summarise(SD = sd(beta))
+  km_2_clusters <- kmeans(sdlist$SD, centers = 2)
+  
+  
+filter_variable_cgi <- cbind(sdlist,km_2_clusters$cluster) %>%
+  dplyr::select(V1, SD, cluster = `km_2_clusters$cluster`)
+
+filter_variable_cgi %>%
+  mutate(cluster = as.character(cluster)) %>%
+  ggplot(aes(x = SD, group = cluster, fill = cluster))+
+  geom_density( alpha = 0.7)
+
+```
+
+```{r second filter out non-variable CGI}
+high_variable_cgi <- filter_variable_cgi %>%
+  group_by(cluster) %>%
+  summarise(avg = mean(SD)) %>%
+  ungroup() %>%
+  filter(avg == max(avg))
+
+print(paste0("pre-filtered probe number:", length(beta_matrix$V1)))
+
+beta_matrix<-  beta_matrix %>%
+  filter(V1 %in% unlist(filter_variable_cgi[which( filter_variable_cgi$cluster == high_variable_cgi$cluster), "V1"]) )
+ 
+print(paste0("post-filtered probe number:", length(beta_matrix$V1)))
+```
+```{r nnls for purity correction}
+library(NMF)
+
+A_matrix <- purity %>%
+              filter(!is.na(purity)) %>%
+  mutate(cancer = purity, infiltrate = 1- purity)%>%
+               dplyr::select(Sample_Name, cancer, infiltrate) 
+
+X_matrix <- beta_matrix %>%
+  gather("Sample_Name", "beta", -V1) %>%
+  spread(V1, beta) 
+
+#remove missing purity
+purity_sample <-intersect(A_matrix$Sample_Name,X_matrix$Sample_Name)
+
+
+A_matrix <-A_matrix %>%
+  filter(Sample_Name %in% purity_sample) %>%
+  column_to_rownames("Sample_Name") 
+
+
+X_matrix <- X_matrix %>%
+  filter(Sample_Name %in% purity_sample) %>%
+  column_to_rownames("Sample_Name") 
+
+Sest <- t(NMF::.fcnnls(as.matrix(A_matrix), as.matrix(X_matrix))$coef)
+
+#assess the number of clipped values for cancerous probes and infiltrate probes
+diff_index_infiltrate <- Sest[,2] >1
+diff_index_cancer <- Sest[,1] >1
+print(paste0("clipped infiltrate probes %:", (sum(diff_index_infiltrate)/length(diff_index_infiltrate) * 100), "(", sum(diff_index_infiltrate), ")"))
+print(paste0("mean:", mean(Sest[diff_index_infiltrate,2]), ", min:", min(Sest[diff_index_infiltrate,2]), ", max:", max(Sest[diff_index_infiltrate,2])))
+
+print(paste0("clipped cancer probes %:", (sum(diff_index_cancer)/length(diff_index_cancer) * 100), "(", sum(diff_index_cancer), ")"))
+
+#clipping to [0,1] interval to fit constraints
+Sest_clipped <- Sest
+Sest_clipped[,1] <- pmax( 0, pmin(Sest[,1], 1))
+Sest_clipped[,2] <- pmax( 0, pmin(Sest[,2], 1))
+
+#S is the adjusted proportion
+#A matrix is amount of infiltration in each patient
+#first step is to make indS to remove impact from infiltration
+Sest_infiltrate_matrix <- do.call(cbind, lapply(A_matrix$infiltrate, function(x) x * Sest_clipped[,2])) %>%
+  `colnames<-` (rownames(A_matrix))
+indS <-(X_matrix -t(Sest_infiltrate_matrix))
+
+indS<-as.data.frame(mapply("/", as.data.frame(indS), A_matrix[1]) ) 
+rownames(indS) <- row.names(A_matrix)
+
+
+#assess the number of clipped PROBES
+neg_df <- indS <0
+print(paste0("% clipped neg probes : ",sum(neg_df)/ length(neg_df)* 100, "(", sum(neg_df), ")"))
+
+pos_df <- indS >1
+print(paste0("% clipped pos probes : ",sum(pos_df)/ length(pos_df)* 100, "(", sum(pos_df), ")"))
+
+indS_clipped <- indS 
+indS_clipped[indS >1] = 1
+indS_clipped[indS <0] = 0
+
+```
+
+```{r plot the evolution of standard deviation before and after purity correction}
+adjusted_CpG <- indS_clipped%>%
+  mutate(Sample.ID = rownames(indS_clipped)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  group_by(CpG) %>%
+  summarise(sdv = sd(beta)) %>%
+  left_join(filter_variable_cgi %>%
+              filter(cluster == 1) %>%
+              dplyr::select(CpG = V1, pre_adjusted_sd = SD))
+
+
+adjusted_CpG %>%
+  dplyr::rename(post_adjusted_sd = sdv) %>%
+  gather("filter", "SD", -CpG)  %>%
+  ggplot(aes(x = SD, group = filter, fill = filter))+
+  geom_density(alpha= 0.7)
+
+```
+
+```{r remove age related probes}
+#as we did not perform this study under a pan-cancer context, we will assess each probe and remove the ones that have significant correlation with age
+age_correlation <- indS_clipped%>%
+  mutate(Sample.ID = rownames(indS_clipped)) %>%
+  gather("CpG", "beta", -Sample.ID) %>%
+  dplyr::rename(Sample_Name = Sample.ID) %>%
+  left_join(fread(clinical_csv) %>%
+              dplyr::select(Sample.ID, Sample_Name)) %>%
+  mutate(Patient.ID= substr(Sample.ID,1, 12)) %>%
+    left_join(fread(demographic_csv) %>%
+                mutate(Patient.ID =case_submitter_id )%>%
+                dplyr::select(Patient.ID, age = age_at_index))%>%
+  ungroup()
+
+
+fitted_models = age_correlation%>%
+  group_by(CpG) %>%
+  group_map(~ lm(beta ~age, data =.x))
+
+
+age_correlation_p <-lapply(fitted_models, function(x) summary(x)$coefficients[,4][2])
+
+#list of probes
+age_correlated_cpg <- unique(age_correlation[which(age_correlation_p<=0.05), "CpG"])
+                             
+#number of probes that is likely to be age correlated
+print(paste0("probes that have correlation p-value with age <=0.05, number:",length(age_correlated_cpg)))
+
+indS_clipped_age_filtered <- indS_clipped[!names(indS_clipped) %in% age_correlated_cpg]
+print(paste0("pre-filter number of CpG: ", length(indS_clipped)))
+print(paste0("post-filter number of CpG: ",length(indS_clipped_age_filtered)))
+
+
+
+write.csv(indS_clipped_age_filtered, "../data/processed/methylation_clustering/STAD_preprocessed_beta_matrix_for_clustering.csv", row.names = T)
+```
+
+
+
+
+
+```{r}
+methylation_status <- fread("../data/processed/TCGA_ICGC_methylation_list.tsv") %>%
+  filter(Project == "STAD", Methylation == "RAD51C") %>%
+  left_join(fread("../data/supporting/methylation_cluster_membership_all_TCGA.csv") %>%
+            dplyr::select(Sample.ID= id, Cluster)) %>%
+  left_join(pd %>%
+              mutate(Sample.ID = substr(Sample.ID, 1, 15)) %>%
+              dplyr::select(Sample.ID, Sample_Name)) %>%
+  left_join(fread(purity_csv) %>%
+              dplyr::select(Sample.ID = array, purity)) 
+
+loh_sample <- Sys.glob("../data/raw/2022*TCGA_STAD*/cn_seg/TCGA*_cn_seg_sample.tsv")%>%
+  map_dfr( ~data.table::fread(.x)) %>%
+  separate_rows(`Case ID`, `Sample ID`, `Sample Type`, sep = ", ") %>%
+  filter(`Sample Type` == "Primary Tumor")%>%
+  dplyr::select(`File Name`, Sample.ID = `Sample ID`)
+
+loh <- Sys.glob("../data/raw/2022*TCGA_STAD*meth/cn_seg/*.allelic_specific.seg.txt") %>%
+  map_dfr(~ as.data.frame(fread(.x)) %>%
+            mutate(Sample = basename(.x))) %>%
+  mutate(LOH = if_else(Minor_Copy_Number ==0, "LOH", "non-LOH")) %>%rename(`File Name` = Sample, CN = Copy_Number) %>%
+  left_join(loh_sample)
+
+
+diff_probes <- fread("../data/processed/methylation_clustering/STAD_sign_cpg_spectral.csv", header =F)
+
+beta_matrix_meth <- beta_matrix[, c("V1", unlist(methylation_status$Sample_Name))] %>%
+  gather(key = "Sample_Name", value = "beta", -V1) %>%
+  left_join(methylation_status)
+
+beta_matrix_meth <- beta_matrix_meth %>%
+  left_join(fread(hm450_annotation) %>%
+              dplyr::select(V1 = probeID, CpG_chrm, CpG_beg, CpG_end)) %>%
+  left_join(loh %>%
+              mutate(Sample.ID = substr(Sample.ID, 1, 15)) %>%
+              dplyr::select(-`File Name`))
+
+beta_matrix_meth <- beta_matrix_meth %>%
+  filter(CpG_chrm == Chromosome, CpG_beg >Start, CpG_end <End) %>%
+  filter(V1 %in% unlist(diff_probes$V2))
+  
+
+beta_matrix_meth %>%
+  ggplot(aes(x = LOH, y = beta))+
+  geom_violin()+
+  facet_wrap(~Cluster + Sample.ID)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
