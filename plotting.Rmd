@@ -1192,6 +1192,10 @@ age_stat <- compare_means(age ~ Methylation, group.by = "Dataset",
   filter(n_distinct(SampleID)>2) %>%
   ungroup(),
                           ref.group = "No")
+age_stat %<>%
+  group_by(Dataset) %>%
+  mutate(p.adj = p.adjust(p)) %>%
+  ungroup()
 
 age_DF %>%
   filter(Dataset != "LUSC") %>%
@@ -1213,7 +1217,7 @@ age_DF %>%
   facet_wrap(~Dataset, scale = "free", ncol = 4)+
   stat_pvalue_manual(age_stat%>%
  mutate(y.position = c(rep(c(95, 110),2), 95, 95, 95, 110, rep(95, 3)),
-        p.adj = if_else(p.adj > 0.05, "ns", paste0("q = ",as.character(p.adj)))), label = "p.adj")+
+        p.adj = if_else(p.adj > 0.05 , "ns", if_else(Dataset == "OV", paste0("adj.p= ",as.character(round(p.adj, 3))), paste0("p= ",as.character(round(p.adj, 3)))))), label = "p.adj")+
   geom_text(data =. %>%
               dplyr::select(Dataset, Methylation, Methylation_count) %>%
               distinct(), mapping = aes(y = 0, label = Methylation_count))+
@@ -2053,12 +2057,18 @@ stat.test <- hrd_plot_df %>%
   filter(n() >2, !is.na(value)) %>%
   ungroup() %>%
   compare_means(value ~ Methylation, data =., group.by = c("Project", "Predictor"), ref.group = "No") %>%
+  ungroup() %>%
+  group_by(Project, Predictor) %>%
+  mutate(p.adj = p.adjust(p),
+         p.adj = case_when(p.adj >=0.05 ~ "ns",
+                           p.adj <0.05 & p.adj >=0.0001 ~ as.character(round(p.adj, 3)),
+                           p.adj <0.0001 ~ "<0.0001")) %>%
+  ungroup() %>%
   left_join(hrd_plot_df %>%
               group_by(Project,  Predictor, .keep = T) %>%
               summarise(y.position = max(value, na.rm =T)) %>%
               ungroup() %>%
               dplyr::select(Project, Predictor, y.position)) %>%
-  mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
   group_by(Project, Predictor) %>%
   mutate(y.position = if_else(Predictor == "HRD_Score", 100-(100- y.position*0.9 -2)/n()*row_number(),  1-(1- 1.1 * y.position)/n()*row_number()))   %>%
   ungroup()
@@ -2130,14 +2140,21 @@ hrd_component_stat <- hrd_component_df %>%
   filter(n() >2) %>%
   ungroup() %>%
   compare_means(value ~ Methylation, data =., group.by = c("Project", "HRD component"), ref.group = "No") %>%
+  group_by(Project, HRD.component) %>%
+  mutate(p.adj = p.adjust(p),
+         p.adj = case_when(p.adj >=0.05 ~ "ns",
+                           p.adj <0.0001 ~ "<0.0001",
+                          TRUE~ as.character(signif(p.adj, 2)))) %>%
+  ungroup() %>%
   left_join(hrd_component_df %>%
+              filter(Methylation != "No") %>%
               group_by(Project,  `HRD component`, .keep = T) %>%
               summarise(y.position = max(value, na.rm =T)) %>%
               ungroup() %>%
               dplyr::select(Project, HRD.component= `HRD component`, y.position)) %>%
   mutate(p.adj = if_else(p.adj >= 0.05, "ns", as.character(p.adj))) %>%
   group_by(Project, HRD.component) %>%
-  mutate(y.position = 40-(40- y.position*0.9 -2)/n()*row_number())   %>%
+  mutate(y.position = if_else(HRD.component != "LST", 40-(40- y.position *1.1 )/n()*row_number(), 48-(40- y.position *0.7 )/n()*row_number()) )  %>%
   ungroup()
 
 
@@ -2154,7 +2171,7 @@ TAI_plot <- hrd_component_df %>%
   facet_grid(cols = vars(Project), rows = vars(`HRD component`), scales="free", space = "free")+
     stat_pvalue_manual(hrd_component_stat %>% 
   filter(HRD.component == "TAI"), label = "p.adj", tip.length = 0)+
- scale_y_continuous("TAI", limits = c(0, 38))+
+ scale_y_continuous("TAI", limits = c(0, 40))+
   scale_x_discrete(labels = function(x) str_wrap(x, width = 5))
 
 
