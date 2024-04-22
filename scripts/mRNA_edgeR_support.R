@@ -3,8 +3,8 @@ BRCA1_RAD51C_meth_annotat <- function(beta_sub) {
   methylated <- beta_sub %>%
     filter(PredefinedCpG %in% c("RAD51C", "BRCA1")) %>%
     group_by(gene, Sample_Name) %>%
-    summarise(probe_num = n(), brca_methylated_num = sum(beta >0.25), rad51c_methylated_num = sum(beta >0.25), fraction = brca_methylated_num/probe_num) %>%
-    filter( (gene == "BRCA1" & fraction >0.6)| (gene =="RAD51C" & rad51c_methylated_num > 2)) %>%
+    summarise(probe_num = round(n()* 0.6, 0), methylated_num = sum(round(beta,2) >= 0.25)) %>%
+    filter(probe_num <= methylated_num) %>%
     ungroup() %>%
     dplyr::select(gene, Sample_Name)
   beta_sub <- beta_sub %>% 

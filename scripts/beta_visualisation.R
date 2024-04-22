@@ -1,12 +1,14 @@
 args = commandArgs(trailingOnly=TRUE)
 
+
 study_name = gsub("_meth", "", args[1])
 
 directory = args[2]
 
+
 genecodefile = paste0(directory, "/data/supporting/HM450.hg38.manifest.gencode.v36.tsv.gz")
 gene_promoter_info = paste0(directory, "/data/supporting/EPDnew_human_ver006_hg38.tsv")
-HR_gene_list = c("BRCA1","BRCA2","RAD51C","RAD51D","BRIP1","PALB2","CHEK2", "XRCC3", "RAD51B")
+HR_gene_list = c("BRCA1","BRCA2","RAD51C","RAD51D","BRIP1","PALB2", "XRCC3", "RAD51B")
 
 # load package
 suppressMessages(suppressWarnings(library(data.table)))
@@ -22,6 +24,11 @@ beta_matrix <- Sys.glob(paste0(directory, "/data/processed/methylation/", study_
   mutate(CpG = V1)%>%
   column_to_rownames("V1")
 
+
+promoter_probes <- fread(paste0(directory,"/data/supporting/CpG_probes_annotation.tsv"), colClasses = c("INCLUDE"= "logical", "INCLUDE_ext" = "logical"))
+promoter_probes <- unlist(promoter_probes %>%
+  dplyr::filter(INCLUDE + INCLUDE_ext >0) %>%
+  pull(probeID))
 # load sample
 sample_sheet <- as.data.frame(fread(Sys.glob(paste0(directory, "/data/raw/2022*_", study_name, "_meth/IDAT/*_pd.csv")), header = T))
 # load pvalue
@@ -44,8 +51,7 @@ gene_promo <- read.table(gene_promoter_info, header= T)
 ##add a column with pre-defined CpG, these probes were manually assigned from variable assessment
 beta_sub <-beta_sub %>%
   mutate(PredefinedCpG = case_when(
-    chr_start >= 43125041 & chr_end <= 43125714 ~ "BRCA1",
-    chr_start >= 58692529 & chr_end <= 58693064 ~ "RAD51C"
+    CpG %in% promoter_probes ~ gene
   ))
 
 ##file only contains putative promoter starting, and ending location
