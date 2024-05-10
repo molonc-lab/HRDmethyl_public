@@ -938,6 +938,18 @@ for (i in seq(dim(promoter_hypermethylation_probes)[[1]]-1, 1)){
 promoter_hypermethylation_probes %>%
   write.table("plots/rebuttal/CpG_probes_annotation.tsv", quote = F,row.names = F, sep = "\t")
 
+beta_sub %>%
+  dplyr::select(probeID = CpG, Dataset = Project, Sample_Group, beta) %>%
+  filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal")) %>%
+  mutate(Sample_Group = if_else(Sample_Group == "Primary Tumor", "Tumour", "Normal"))%>%
+           right_join(promoter_hypermethylation_probes %>%
+                        dplyr::select(Gene, probeID, INCLUDE= INCLUDE_ext)) %>%
+  group_by(Gene, probeID, Dataset , Sample_Group,INCLUDE) %>%
+  summarise(IQR = IQR(beta), Median = median(beta)) %>%
+  pivot_wider(values_from = c(IQR, Median), names_from = Sample_Group) %>%
+  write.table("plots/rebuttal/CpG_probes_annotation_by_type.tsv", quote = F,row.names = F, sep = "\t")
+
+
 
 CGI <- annotation %>%
   separate(CGI, into = c("type", "chrom", "start", "end")) %>%
@@ -1044,12 +1056,12 @@ beta_sub %>%
   ungroup() %>%
   mutate(Sample_N = factor(Sample_N,levels = unique(Sample_N[order(Project)]))) %>%
   group_by(gene, Project, Sample_Name, Sample_Group, Sample_N) %>%
-  summarise(avg_meth_level = mean(beta)) %>%
+  summarise(avg_meth_level = median(beta)) %>%
   dplyr::rename(`Sample Type` = Sample_Group) %>%
   ggplot(aes(y = avg_meth_level, x= Project, color = `Sample Type`))+
   geom_boxplot(outlier.size = 0.2, size = 0.3)+
   facet_grid(rows = vars(gene), cols = vars(Sample_N), scales = "free", space = "free", margins = F)+
-  ylab("Average Methylation Level at Promoter(+-200bps)")+
+  ylab("Median Methylation Level at Selected Promoter CpG Probes")+
   xlab("Dataset")+
   geom_hline(yintercept = 0.25, linetype = 3)+
   theme_bw()+
@@ -1429,7 +1441,6 @@ ggsave(file="plots/Main_Figure_2_stage_type.pdf", width = 300, height = 115, uni
 
 #age
 age_DF <- demograph_table_meth %>%
-  separate_rows(Methylation, sep = " & ") %>%
    group_by(Dataset) %>%
   filter(sum(Methylation != "No") >2) %>%
   ungroup() %>%
@@ -1452,7 +1463,7 @@ age_stat <- compare_means(age ~ Methylation, group.by = "Dataset",
 age_stat %<>%
   ungroup() %>%
   group_by(Dataset) %>%
-  mutate(p.adj = min(p * n(), 1)) %>%
+  mutate(p.adj = pmin(p * n(), 1)) %>%
   ungroup()
 
 age_DF %>%
@@ -1468,20 +1479,21 @@ age_DF %>%
   ungroup())+
   theme_bw()+
   ylab("Age at Diagnosis")+
-  scale_fill_manual(values = methylation_color2, "Methylated Gene")+
-  scale_color_manual(values = methylation_color2, "Methylated Gene")+
+  scale_fill_manual(values = methylation_color2, "Promoter Methylated Gene")+
+  scale_color_manual(values = methylation_color2, "Promoter Methylated Gene")+
   theme(legend.position = "bottom", axis.title.x = element_blank(),strip.background = element_rect(fill="white"))+
   ylim(0, 119)+
   facet_wrap(~Dataset, scale = "free", ncol = 4)+
   stat_pvalue_manual(age_stat%>%
- mutate(y.position = c(rep(c(95, 110),2), 95, 95, 95, 110, rep(95, 3)),
+ mutate(y.position = c(rep(c(95, 110),2),95, 95, 95,  95, 110, 90, 100, 110),
         p.adj = if_else(p.adj > 0.05 , "ns", if_else(Dataset == "OV", paste0("adj.p= ",as.character(round(p.adj, 3))), paste0("p= ",as.character(round(p.adj, 3)))))), label = "p.adj")+
   geom_text(data =. %>%
               dplyr::select(Dataset, Methylation, Methylation_count) %>%
-              distinct(), mapping = aes(y = 0, label = Methylation_count))+
-  scale_x_discrete(limits = function(x) if(length(x) ==3 ){return(c("BRCA1", "RAD51C", "No"))} else{ return(c("RAD51C", "No"))})
+              distinct(), mapping = aes(y = 0, label = Methylation_count)) +
+  scale_x_discrete(limits = function(x) if(length(x) ==3 ){return(c("BRCA1", "RAD51C", "No"))} else if(length(x) == 4){return(c("BRCA1", "RAD51C", "BRCA1 & RAD51C", "No"))} else{ return(c("RAD51C", "No"))},
+                   labels = function(x) str_wrap(x, width = 5))
   
-ggsave(file="plots/Main_Figure_2_age_type.pdf",width = 300, height = 115, units = "mm")
+ggsave(file="plots/Main_Figure_2_age_type.pdf",width = 300, height = 130, units = "mm")
 
 #sex
  demograph_table_meth %>%
@@ -1504,7 +1516,7 @@ ggsave(file="plots/Main_Figure_2_age_type.pdf",width = 300, height = 115, units 
   ggplot(aes(x = Methylation, fill = sex))+
   geom_histogram(stat = "count",position = "fill", color = "black", size = 0.2)+
   theme_bw()+
-  xlab("Methylated Gene")+
+  xlab("Promoter Methylated Gene")+
   ylab("Percent of Patients")+
   scale_fill_manual(values = c("F" = "#D55E00","M" = "#0072B2", "NA" = "#BEBEBE"), "Sex")+
   theme(legend.position = "bottom",strip.background = element_rect(fill="white"))+
@@ -1517,13 +1529,13 @@ ggsave(file="plots/Main_Figure_2_sextype.pdf", width = 250,height = 80, units = 
 
 #ances
  demograph_table_meth %>%
-   separate_rows(Methylation, sep = " & ") %>%
    group_by(Dataset, Methylation, consensus_ancestry) %>%
   summarise(n=n()) %>%
   ungroup() %>%
    mutate(level = case_when(Methylation == "BRCA1" ~ 1,
                             Methylation == "RAD51C" ~ 2,
-                            Methylation == "No" ~ 3)) %>%
+                            Methylation == "BRCA1 & RAD51C" ~ 3,
+                            Methylation == "No" ~ 4)) %>%
    group_by(Methylation,Dataset) %>%
   filter(sum(n)>2) %>%
    mutate(Methylation = paste0(Methylation, " (N=",sum(n),")", sep = "")) %>%
@@ -1540,7 +1552,7 @@ ggsave(file="plots/Main_Figure_2_sextype.pdf", width = 250,height = 80, units = 
   ggplot(aes(x = Methylation, fill = consensus_ancestry, y = n))+
   geom_bar(stat = "identity", position = "fill")+
   theme_bw()+
-  xlab("Methylated Gene")+
+  xlab("Promoter Methylated Gene")+
   ylab("Percent of Patients")+
   theme(legend.position = "bottom",strip.background = element_rect(fill="white"))+
   scale_x_discrete(labels = function(x) str_wrap(x, width = 5))+
@@ -1548,7 +1560,7 @@ ggsave(file="plots/Main_Figure_2_sextype.pdf", width = 250,height = 80, units = 
   scale_fill_manual(values = c("afr" = "#DE6B48", "afr_admix" = "#E5B181", "amr" = "#9CE4A2", "eas" = "#E9E480","eur" = "#7EBBC4", "eur_admix" = "#B2D1D5","sas" = "#9055A2", "sas_admix" ="#D499B9", "admix" = "black","NA" = "#BEBEBE"), "Consensus Ancestry")+
   facet_wrap(~Dataset, scale = "free_x", ncol = 9)+
    guides(fill = guide_legend(nrow = 2))
-ggsave(file="plots/Main_Figure_2_ances.pdf", width = 300,height = 100, units = "mm")
+ggsave(file="plots/Main_Figure_2_ances.pdf", width = 390,height = 100, units = "mm")
 
 ```
 ##Supplementary plot 4 - TNBC
@@ -2630,6 +2642,11 @@ ggsurvplot(survfit(Surv(OS.Time, OS) ~  Methylation, data = surv %>%filter(Methy
   ggtheme = theme_bw(), font.subtitle = 8 , font.caption = 2, risk.table.fontsize = 5,pval = T, pval.size = 4,risk.table.col="strata", palette = c("#93a667", "#7BB2D9", "grey"), legend.labs =c("meBRCA1",  "meRAD51C", "No") )
 dev.off()
 
+
+ggsurvplot(survfit(Surv(OS.Time, OS) ~  Methylation, data = surv %>%filter(Methylation %in% c("BRCA1","RAD51C", "No"), Project =="OV", Subtype == "HRD") %>%  distinct() %>%
+                                mutate(Methylation = factor(Methylation, levels = c("BRCA1", "No")))), ylab = "Overall Survival", xlab = "Time (Days)", risk.table = TRUE,
+  ggtheme = theme_bw(), font.subtitle = 8 , font.caption = 2, risk.table.fontsize = 5,pval = T, pval.size = 4,risk.table.col="strata", palette = c("#93a667",  "grey"), legend.labs =c("meBRCA1",  "No") )
+
 pdf("plots/Supplementary/survival/LGG_survival.pdf")
 ggsurvplot(survfit(Surv(OS.Time, OS) ~  Methylation, data = surv %>%filter(Methylation %in% c("RAD51C", "No"), Project =="LGG") %>%  distinct() %>%
                                 mutate(Methylation = factor(Methylation, levels = c("RAD51C", "No")))), ylab = "Overall Survival", xlab = "Time (Days)", risk.table = TRUE,
@@ -2871,7 +2888,7 @@ olap_all_tall_summary <- olap_all_tall %>%
   filter(min(mean_CTD2) < 1) %>%
   #remove celllines do not have RAD51C promoter info
   filter(!cell_line_display_name %in% c("KE39","KATOIII","MKN45", "IM95"))%>%
-  mutate(group = case_when(cell_line_display_name == "SNU601" ~ "Homozygous RAD51Cme (SNU620)",
+  mutate(group = case_when(cell_line_display_name == "SNU601" ~ "Homozygous RAD51Cme (SNU601)",
                        cell_line_display_name %in% c("AGS", "TGBC11TKB", "SNU620", "SNU719") ~ "Heterozygous RAD51Cme",
                        TRUE ~"No Methylation")) %>%
   left_join(depmap_hrd %>%
@@ -2921,10 +2938,10 @@ olab_plot <- olap_all_tall_summary %>%
   geom_point(data = .%>% filter(group == "No Methylation (HRD Score >= 42)"), alpha = 0.7) +
   geom_line(data = all_fits %>%filter(group == "Heterozygous RAD51Cme"), aes(y = p), size = 1) +
   geom_point(data = .%>% filter(group == "Heterozygous RAD51Cme")) +
-  geom_line(data = all_fits %>%filter(group == "Homozygous RAD51Cme (SNU620)"), aes(y = p), size = 1) +
+  geom_line(data = all_fits %>%filter(group == "Homozygous RAD51Cme (SNU601)"), aes(y = p), size = 1) +
   geom_point(data = .%>% filter(group == "Homozygous RAD51Cme")) +
   
-  scale_colour_manual(values = c("Homozygous RAD51Cme (SNU620)" = "#165e91",
+  scale_colour_manual(values = c("Homozygous RAD51Cme (SNU601)" = "#165e91",
                                  "Heterozygous RAD51Cme" = "#7BB2DA",
                                  "HRD Score >= 42 & High sensitivity (HGC27)" = "orange",
                                  "No Methylation (HRD Score < 42)" = "lightgrey",
@@ -3108,7 +3125,9 @@ write.csv(all_fits, "data/source_data/figure_7e_curves.csv", quote = F, row.name
 ```
 #Source data Supp Figure
 ```{r}
-write.csv(beta_sub %>%filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal"), !is.na(gene_promo_200), gene_promo_200 != "CHEK2"),
+write.csv(beta_sub %>%filter(Sample_Group %in% c("Primary Tumor", "Solid Tissue Normal"),  gene_promo_200 != "CHEK2") %>%
+                               mutate(Sample.ID = if_else(Project == "OV", substr(Sample.ID, 1, 8), Sample.ID)) %>%
+            dplyr::select(Dataset = Project, gene, CpG, Sample.ID, Sample_Group, beta),
           "data/source_data/supplementary_figure_1.csv", quote = F, row.names = F)
 
 
@@ -3768,4 +3787,25 @@ treatment_meth %>%
 
 treatment
 
+```
+
+
+# export ICGC HM450 for igv
+```{r}
+library(rtracklayer)
+ch = import.chain("/working/lab_olgak/lijunX/OV_meBRCA1_Nanopore/ref/hg38ToHg19.over.chain")
+
+beta_hg38 <- beta_sub_meth %>%
+  filter(Project == "OV",gene == "BRCA1",startsWith(Sample.ID, "AOCS_158"), PredefinedCpG=="BRCA1")%>%
+  mutate(chr = "chr17", name = "beta_hg19", beta = round(beta * 1000),
+         chr_start = 41277187) %>%
+  dplyr::select(chr, start = chr_start, end = chr_end, name, beta, strand =probe_strand) 
+beta_hg38 <- makeGRangesFromDataFrame(beta_hg38, keep.extra.columns = T) 
+seqlevelsStyle(beta_hg38) = "UCSC" 
+
+
+beta_hg19<- liftOver(beta_hg38, ch)
+data.frame(beta_hg19) %>%
+  dplyr::select(seqnames, start, end , name, beta, strand) %>%
+  write.table(., file = "/working/lab_olgak/lijunX/OV_meBRCA1_Nanopore/AOCS_158_brca1.bed", quote=F, sep="\t", row.names=F, col.names=F)
 ```
